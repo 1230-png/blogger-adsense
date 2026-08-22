@@ -2,8 +2,8 @@ name: Blogger Blog Daily
 
 on:
   schedule:
-    # KST = UTC+9, so 00:00 KST = 15:00 UTC (전날)
-    - cron: '0 15 * * *'
+    # UTC 기준 매일 0시, 12시 (한국 시간 오전 9시, 밤 9시)
+    - cron: '0 0,12 * * *'
   workflow_dispatch:
     inputs:
       category:

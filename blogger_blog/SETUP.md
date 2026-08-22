@@ -79,7 +79,7 @@ Repository → Settings → Secrets and variables → Actions → New repository
 ## 3. 동작 방식
 
 ```
-00:00 KST ──→ data/topics.csv 에서 아직 안 쓴 주제 1개 선정
+09:00 / 21:00 KST ──→ data/topics.csv 에서 아직 안 쓴 주제 1개 선정
             ├─ Groq로 서론+소제목4~6개+결론 구조의 글 생성 (최소 1,200자 강제)
             ├─ Blogger API로 발행 (즉시 공개)
             └─ data/used_topics.json 에 발행 기록 추가 후 커밋
@@ -89,7 +89,8 @@ Repository → Settings → Secrets and variables → Actions → New repository
   `finance / health / tech / life / self_dev` 중 하나를 지정할 수 있습니다.
   비워두면 전체 카테고리 중 무작위로 선택합니다.
 - 예약 실행 시각은 `.github/workflows/blogger_blog_daily.yml` 의
-  `cron: '0 15 * * *'`(UTC) = **매일 00:00 KST** 입니다. GitHub 예약 실행은
+  `cron: '0 0,12 * * *'`(UTC) = **매일 09:00 / 21:00 KST**, 하루 2편입니다.
+  GitHub 예약 실행은
   정상적으로 25~60분 늦게 시작될 수 있으며, 고장이 아닙니다.
 - 초반에 애드센스 재심사에 필요한 게시글 수를 빨리 채우고 싶다면, Actions 탭에서
   **Run workflow**를 여러 번 수동 실행할 수 있습니다. 다만 스팸성 대량 발행으로
