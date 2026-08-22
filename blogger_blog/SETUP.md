@@ -150,6 +150,12 @@ cat post.json | python blogger_blog/scripts/publish_post.py
 → Groq 응답이 짧게 나온 경우로, 자동으로 1회 재시도합니다. 계속 실패하면
   `GROQ_MODEL` 환경변수로 다른 모델을 지정해 보세요.
 
+**"사용 가능한 Groq 모델이 없습니다" / Groq 404 에러**
+→ Groq 가 해당 모델을 퇴역시킨 경우입니다(무료 티어는 주기적으로 바뀝니다).
+  기본값은 `openai/gpt-oss-120b` → `openai/gpt-oss-20b` 순으로 자동
+  폴백하지만 둘 다 사라졌다면, https://console.groq.com/docs/models 에서
+  현재 모델 ID를 확인해 `GROQ_MODEL` 시크릿으로 지정하세요.
+
 **"주제가 계속 겹치는 것 같다"**
 → `blogger_blog/data/used_topics.json`에 발행 기록이 잘 커밋되고 있는지
   Actions 로그에서 4️⃣ 단계를 확인하세요.

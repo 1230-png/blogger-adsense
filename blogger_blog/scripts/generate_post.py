@@ -23,7 +23,16 @@ import requests
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+# Groq 무료 티어는 모델을 주기적으로 퇴역시킨다(llama-3.3-70b-versatile 는
+# 2026-08-16 퇴역했고, 그 뒤로는 이 엔드포인트가 404를 돌려준다). 모델 하나가
+# 사라져도 발행이 멈추지 않도록 후보 목록을 두고 404면 다음으로 넘어간다.
+# GROQ_MODEL 을 지정하면 그 모델만 사용한다.
+GROQ_MODEL = os.getenv("GROQ_MODEL", "")
+GROQ_MODEL_CANDIDATES = [GROQ_MODEL] if GROQ_MODEL else [
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+]
 
 MIN_BODY_CHARS = 1200
 
@@ -63,32 +72,50 @@ def _call_groq(topic: str, category_label: str, extra_instruction: str = "") -> 
 
 JSON으로만 반환하세요."""
 
-    response = requests.post(
-        GROQ_API_URL,
-        headers={
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": GROQ_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_MESSAGE},
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.7,
-            "max_tokens": 3000,
-        },
-        timeout=60,
+    for model in GROQ_MODEL_CANDIDATES:
+        response = requests.post(
+            GROQ_API_URL,
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_MESSAGE},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.7,
+                "max_tokens": 3000,
+            },
+            timeout=60,
+        )
+
+        # 404 는 "그런 모델이 없다"는 뜻이다(키가 틀리면 401). 퇴역한 모델일 수
+        # 있으므로 다음 후보로 넘어간다.
+        if response.status_code == 404:
+            print(
+                f"⚠️ 모델 '{model}' 을(를) 찾을 수 없습니다(404). 다음 후보로 시도합니다.",
+                file=sys.stderr,
+            )
+            continue
+
+        response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0]
+
+        return json.loads(content.strip())
+
+    raise RuntimeError(
+        "사용 가능한 Groq 모델이 없습니다. 시도한 모델: "
+        + ", ".join(GROQ_MODEL_CANDIDATES)
+        + ". console.groq.com/docs/models 에서 현재 모델을 확인한 뒤 "
+        "GROQ_MODEL 시크릿으로 지정하세요."
     )
-    response.raise_for_status()
-    content = response.json()["choices"][0]["message"]["content"]
-
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0]
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0]
-
-    return json.loads(content.strip())
 
 
 def _body_char_count(post: dict) -> int:
