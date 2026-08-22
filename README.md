@@ -18,7 +18,8 @@ YouTube 자동화 저장소(`1230-png/Soop1230` — `@200-y3b`, `@reality_bizarr
 
 ```
 매일 09:00 / 21:00 KST (cron '0 0,12 * * *' UTC) — 하루 2편
-  1️⃣ blogger_blog/data/topics.csv 에서 아직 안 쓴 주제 1개 선정
+  1️⃣ blogger_blog/data/topics.csv(250개)에서 아직 안 쓴 주제 1개 선정
+     └ 전부 소진되면 Groq 로 새 주제를 생성 (기발행 주제와 대조해 중복 차단)
   2️⃣ Groq(openai/gpt-oss-120b)로 서론 + 소제목 4~6개 + 결론 구조 생성
      └ 본문 1,200자 미만이면 발행하지 않고 실패 처리 (얇은 콘텐츠 방지)
   3️⃣ Blogger API v3 로 발행

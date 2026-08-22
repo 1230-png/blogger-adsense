@@ -42,6 +42,9 @@ jobs:
 
       - name: 1️⃣ 주제 선정
         id: topic
+        env:
+          # topics.csv 가 소진되면 pick_topic.py 가 Groq 로 새 주제를 만든다.
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
           python blogger_blog/scripts/pick_topic.py "${{ github.event.inputs.category }}" > topic.json
           cat topic.json
