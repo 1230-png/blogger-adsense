@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# OAuth 자격증명 — 절대 커밋 금지
+client_secret*.json
+.env
+.env.local
+
+# 워크플로 실행 중 생기는 임시 산출물
+topic.json
+post.json
+publish_result.json

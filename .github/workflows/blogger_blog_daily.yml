@@ -1,0 +1,93 @@
+name: Blogger Blog Daily
+
+on:
+  schedule:
+    # KST = UTC+9, so 00:00 KST = 15:00 UTC (전날)
+    - cron: '0 15 * * *'
+  workflow_dispatch:
+    inputs:
+      category:
+        description: '카테고리 (비우면 무작위): finance, health, tech, life, self_dev'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+concurrency:
+  group: blogger-blog
+  cancel-in-progress: false
+
+jobs:
+  publish-post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # 발행 기록 커밋 단계에서 rebase 하려면 전체 히스토리가 필요하다.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r blogger_blog/scripts/requirements.txt
+
+      - name: 1️⃣ 주제 선정
+        id: topic
+        run: |
+          python blogger_blog/scripts/pick_topic.py "${{ github.event.inputs.category }}" > topic.json
+          cat topic.json
+
+      - name: 2️⃣ 글 생성 (Groq)
+        id: generate
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          cat topic.json | python blogger_blog/scripts/generate_post.py > post.json
+          cat post.json
+
+      - name: 3️⃣ Blogger 발행
+        id: publish
+        env:
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+          BLOGGER_LABELS_EXTRA: ${{ secrets.BLOGGER_LABELS_EXTRA }}
+        run: |
+          cat post.json | python blogger_blog/scripts/publish_post.py > publish_result.json
+          cat publish_result.json
+
+      - name: 4️⃣ 발행 기록 커밋
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add blogger_blog/data/used_topics.json
+          if git diff --cached --quiet; then
+            echo "기록할 변경사항 없음"
+          else
+            git commit -m "📝 Blogger: $(date '+%Y-%m-%d %H:%M') 발행 기록 [skip ci]"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi
+
+      - name: 📊 결과 요약
+        if: always()
+        run: |
+          echo "=== Blogger Blog Daily ===" >> $GITHUB_STEP_SUMMARY
+          if [ -f publish_result.json ]; then
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat publish_result.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ 발행 결과 없음 (로그 확인 필요)" >> $GITHUB_STEP_SUMMARY
+          fi
