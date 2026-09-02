@@ -49,19 +49,25 @@ def render_page(template: str, context: dict) -> str:
     return html
 
 
-def build_context(blog: dict) -> dict:
-    email = os.environ.get("BLOGGER_CONTACT_EMAIL", "").strip()
+def build_context(blog: dict, *, contact_email: str = "", blog_name: str = "") -> dict:
+    """페이지 템플릿에 채워 넣을 값.
+
+    이메일은 인자 → 환경변수 순으로 찾는다. 인자를 받는 이유: 시크릿을
+    미리 등록해 두지 않아도 워크플로 실행 화면에서 바로 입력할 수 있게
+    하기 위해서다. 어느 쪽이든 파일에는 적지 않는다 (저장소가 public).
+    """
+    email = (contact_email or os.environ.get("BLOGGER_CONTACT_EMAIL", "")).strip()
     if not email:
         print(
-            "❌ BLOGGER_CONTACT_EMAIL 환경변수가 필요합니다.\n"
-            "   개인정보처리방침과 문의 페이지에는 실제로 연락 가능한 주소가 있어야 하고,\n"
-            "   이 저장소는 public 이므로 파일이 아니라 시크릿으로 넣습니다.",
+            "❌ 문의용 이메일이 없습니다.\n"
+            "   --contact-email 로 넘기거나 BLOGGER_CONTACT_EMAIL 환경변수를 설정하세요.\n"
+            "   개인정보처리방침과 문의 페이지에는 실제로 연락 가능한 주소가 있어야 합니다.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     blog_url = (blog.get("url") or "").rstrip("/")
-    name = os.environ.get("BLOGGER_BLOG_NAME", "").strip() or blog.get("name", "")
+    name = (blog_name or os.environ.get("BLOGGER_BLOG_NAME", "")).strip() or blog.get("name", "")
     if not name:
         print("❌ 블로그 이름을 확인할 수 없습니다. BLOGGER_BLOG_NAME 을 지정하세요.", file=sys.stderr)
         sys.exit(1)
@@ -90,12 +96,22 @@ def main():
         choices=sorted(quality.REQUIRED_PAGES),
         help="이 페이지 하나만 처리",
     )
+    parser.add_argument(
+        "--contact-email",
+        default="",
+        help="페이지에 표시할 문의용 이메일 (없으면 BLOGGER_CONTACT_EMAIL 환경변수)",
+    )
+    parser.add_argument(
+        "--blog-name",
+        default="",
+        help="페이지에 표시할 블로그 이름 (없으면 Blogger 설정값)",
+    )
     args = parser.parse_args()
 
     service = blogger_api.get_blogger_client()
     blog_id = blogger_api.require_blog_id()
     blog = blogger_api.get_blog(service, blog_id)
-    context = build_context(blog)
+    context = build_context(blog, contact_email=args.contact_email, blog_name=args.blog_name)
 
     # 초안 페이지는 방문자에게 보이지 않아 심사에서도 없는 것과 같지만,
     # 여기서는 전체 목록을 봐야 한다. 초안이 이미 있는데 못 찾고 새로 만들면

@@ -12,6 +12,10 @@ name: Blogger Required Pages
 on:
   workflow_dispatch:
     inputs:
+      contact_email:
+        description: '페이지에 표시할 문의용 이메일 (비우면 BLOGGER_CONTACT_EMAIL 시크릿 사용)'
+        required: false
+        default: ''
       dry_run:
         description: '실제로 발행하지 않고 결과만 확인'
         type: boolean
@@ -57,11 +61,14 @@ jobs:
           BLOGGER_CONTACT_EMAIL: ${{ secrets.BLOGGER_CONTACT_EMAIL }}
           BLOGGER_BLOG_NAME: ${{ secrets.BLOGGER_BLOG_NAME }}
         run: |
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
-            python blogger_blog/scripts/publish_pages.py --dry-run
-          else
-            python blogger_blog/scripts/publish_pages.py
+          ARGS=()
+          if [ -n "${{ inputs.contact_email }}" ]; then
+            ARGS+=(--contact-email "${{ inputs.contact_email }}")
           fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          python blogger_blog/scripts/publish_pages.py "${ARGS[@]}"
 
       - name: 다음 할 일 안내
         if: success()
