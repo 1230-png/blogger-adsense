@@ -137,8 +137,15 @@ def main():
         page = find_existing(existing, keywords)
 
         if args.dry_run:
-            action = "갱신" if page else "생성"
-            print(f"[dry-run] {action}: {title} ({quality.text_length(content)}자)", file=sys.stderr)
+            # 주소를 함께 찍는다. Blogger 의 '페이지 목록' 가젯이 항목을 직접
+            # 입력받는 형태일 때, 이 주소를 그대로 붙여 넣어야 하기 때문이다.
+            action = "갱신" if page else "생성 예정"
+            url = page.get("url", "") if page else "(아직 없음)"
+            print(
+                f"[dry-run] {action}: {title} ({quality.text_length(content)}자)\n"
+                f"          {url}",
+                file=sys.stderr,
+            )
             continue
 
         if page:
