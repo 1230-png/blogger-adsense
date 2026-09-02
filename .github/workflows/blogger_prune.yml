@@ -59,10 +59,10 @@ jobs:
         run: |
           if [ "${{ inputs.apply }}" = "true" ]; then
             python blogger_blog/scripts/prune_posts.py \
-              --keep "${{ inputs.keep }}" --apply --report prune_report.md > /dev/null
+              --keep "${{ inputs.keep }}" --apply --report prune_report.md
           else
             python blogger_blog/scripts/prune_posts.py \
-              --keep "${{ inputs.keep }}" --report prune_report.md > /dev/null
+              --keep "${{ inputs.keep }}" --report prune_report.md
           fi
 
       # 어떤 글을 내렸는지가 되돌릴 때 필요한 유일한 기록이다.

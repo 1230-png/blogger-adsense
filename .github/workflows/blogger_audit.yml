@@ -41,7 +41,7 @@ jobs:
           BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
           BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
         run: |
-          python blogger_blog/scripts/audit_blog.py --report audit_report.md > /dev/null
+          python blogger_blog/scripts/audit_blog.py --report audit_report.md
 
       # 미달이 있어도 리포트는 반드시 남긴다. 실패했을 때야말로 필요하다.
       - name: 리포트를 실행 요약에 표시
