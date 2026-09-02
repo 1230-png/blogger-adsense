@@ -1,0 +1,62 @@
+name: Blogger AdSense Audit
+
+# 발행된 글 전체를 애드센스 기준으로 훑어 리포트를 만든다.
+#
+# 애드센스는 "가치가 별로 없는 콘텐츠"라고만 알려주고 어느 글이 문제인지는
+# 말해 주지 않는다. 이 워크플로가 그 자리를 메운다. 기준 미달이 남아 있으면
+# 실패(빨간 X)로 끝나므로, **재심사를 요청하기 전에 여기가 초록불인지**
+# 확인하는 용도로 쓴다.
+
+on:
+  schedule:
+    # 매주 월요일 UTC 1시 (한국 시간 오전 10시)
+    - cron: '0 1 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r blogger_blog/scripts/requirements.txt
+
+      - name: 감사 실행
+        env:
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+        run: |
+          python blogger_blog/scripts/audit_blog.py --report audit_report.md
+
+      # 미달이 있어도 리포트는 반드시 남긴다. 실패했을 때야말로 필요하다.
+      - name: 리포트를 실행 요약에 표시
+        if: always()
+        run: |
+          if [ -f audit_report.md ]; then
+            cat audit_report.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ 리포트가 생성되지 않았습니다. 자격증명(BLOGGER_*)을 확인하세요." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 리포트 아티팩트 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adsense-audit-report
+          path: audit_report.md
+          if-no-files-found: warn

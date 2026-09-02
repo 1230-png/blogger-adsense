@@ -1,7 +1,13 @@
 # blogger-adsense
 
-Groq + Google Blogger API v3 로 매일 정보성 블로그 글을 자동 발행하는 파이프라인.
+Groq + Google Blogger API v3 로 정보성 블로그 글을 자동 발행하는 파이프라인.
 **전부 무료 티어**로 동작합니다.
+
+> ⚠️ **애드센스 반려 상태라면 아래 두 문서를 먼저 읽으세요.** 반려 통지에는
+> 위반이 **두 건** 들어 있고, 한 건만 고치면 나머지로 다시 반려됩니다.
+>
+> - 위반 1 (가치가 별로 없는 콘텐츠) → [`blogger_blog/ADSENSE_FIX.md`](blogger_blog/ADSENSE_FIX.md)
+> - 위반 2 (게시자 콘텐츠가 없는 화면의 광고) → [`blogger_blog/ADS_PLACEMENT.md`](blogger_blog/ADS_PLACEMENT.md)
 
 ## 왜 별도 저장소인가
 
@@ -14,20 +20,77 @@ YouTube 자동화 저장소(`1230-png/Soop1230` — `@200-y3b`, `@reality_bizarr
 - 유튜브 자동화는 이미 동작 검증이 끝난 상태라, 블로그 파이프라인 때문에
   건드리지 않습니다.
 
+## 구조
+
+```
+blogger_blog/
+├── scripts/
+│   ├── quality.py          품질 게이트 ★ 발행과 감사가 같이 쓰는 단일 기준
+│   ├── blogger_api.py      Blogger API v3 클라이언트 (글·페이지 공용)
+│   ├── pick_topic.py       주제 선정 (소진되면 Groq 로 새 주제 생성)
+│   ├── generate_post.py    글 생성 + HTML 조립
+│   ├── publish_post.py     발행 (게이트 미달이면 발행 중단)
+│   ├── publish_pages.py    필수 고정 페이지 게시
+│   ├── audit_blog.py       발행된 글 전체 진단 → 리포트
+│   ├── prune_posts.py      품질 순 상위 N편만 유지, 나머지는 초안 전환
+│   └── get_blogger_token.py  OAuth refresh token 발급 (로컬 1회)
+├── pages/                  소개·문의·개인정보처리방침·면책조항 템플릿
+├── data/
+│   ├── topics.csv          주제 후보 250개
+│   └── used_topics.json    발행 기록 (내부 링크 생성에도 쓰임)
+├── tests/                  pytest — 네트워크·자격증명 불필요
+├── ADSENSE_FIX.md          반려 대응 — 위반 1 (콘텐츠) ★
+├── ADS_PLACEMENT.md        반려 대응 — 위반 2 (광고 위치) ★
+└── SETUP.md                최초 설정
+```
+
 ## 동작
 
 ```
-매일 09:00 / 21:00 KST (cron '0 0,12 * * *' UTC) — 하루 2편
-  1️⃣ blogger_blog/data/topics.csv(250개)에서 아직 안 쓴 주제 1개 선정
-     └ 전부 소진되면 Groq 로 새 주제를 생성 (기발행 주제와 대조해 중복 차단)
-  2️⃣ Groq(openai/gpt-oss-120b)로 서론 + 소제목 4~6개 + 결론 구조 생성
-     └ 본문 1,200자 미만이면 발행하지 않고 실패 처리 (얇은 콘텐츠 방지)
-  3️⃣ Blogger API v3 로 발행
-  4️⃣ blogger_blog/data/used_topics.json 에 기록 후 커밋
+매일 09:00 KST (cron '0 0 * * *' UTC) — 하루 1편
+  0️⃣ pytest 로 품질 게이트 자체를 먼저 검사
+  1️⃣ topics.csv 에서 아직 안 쓴 주제 1개 선정
+     └ 전부 소진되면 Groq 로 새 주제 생성 (기발행 주제와 대조해 중복 차단)
+  2️⃣ Groq 로 본문 생성 → 요약 표 + 소제목 5~7개 + 내부 링크 3개로 조립
+     └ 산문 1,600자 미만이면 한 번 재생성, 그래도 미달이면 중단
+  3️⃣ quality.py 게이트 통과 시에만 Blogger 발행
+     └ 미달이면 발행하지 않고 그날을 건너뛴다 (워크플로 실패는 정상 동작)
+  4️⃣ used_topics.json 에 기록 후 커밋
 ```
 
-수동 실행은 Actions 탭 → **Run workflow**. `category` 입력으로
-`finance / health / tech / life / self_dev` 중 하나를 지정할 수 있습니다.
+### 워크플로
+
+| 워크플로 | 실행 | 하는 일 |
+|---|---|---|
+| **Blogger Blog Daily** | 매일 09:00 KST | 글 1편 생성·발행 |
+| **Blogger AdSense Audit** | 매주 월 10:00 KST + 수동 | 발행된 글 전체 진단 → 리포트 |
+| **Blogger Required Pages** | 수동 | 필수 고정 페이지 4종 게시 |
+| **Blogger Prune Posts** | 수동 | 품질 상위 N편만 남기고 나머지 초안 전환 |
+
+수동 실행은 Actions 탭 → **Run workflow**.
+
+## 품질 게이트
+
+`quality.py` 하나가 **발행 전 검사와 발행 후 감사에 모두** 쓰입니다. 기준이
+두 벌이 되지 않으므로, "발행은 됐는데 감사에서 떨어지는" 글이 생기지 않습니다.
+
+차단(🔴) 항목: 본문 1,700자 미만 · 소제목 3개 미만 · 내부 링크 없음 ·
+다른 글과 겹치는 문장 30% 초과 · 거의 같은 글 존재 · 필수 페이지 누락 ·
+발행 글 20편 미만 · 통과율 90% 미만
+
+**이 숫자들은 Google이 공개한 기준이 아닙니다.** 정책 문서가 서술적으로
+요구하는 바를 자동 검사로 옮긴 운영용 휴리스틱입니다. 통과가 승인을
+보장하지 않습니다. 자세한 설명은 `quality.py` 상단 주석에 있습니다.
+
+## 테스트
+
+```bash
+pip install -r blogger_blog/scripts/requirements.txt
+python -m pytest blogger_blog/tests -q
+```
+
+네트워크도 자격증명도 필요 없습니다. 매일 발행 워크플로가 발행 전에 먼저
+돌립니다.
 
 ## 필요한 GitHub Secrets
 
@@ -38,10 +101,13 @@ YouTube 자동화 저장소(`1230-png/Soop1230` — `@200-y3b`, `@reality_bizarr
 | `BLOGGER_CLIENT_SECRET` | ✅ | Google Cloud Console |
 | `BLOGGER_REFRESH_TOKEN` | ✅ | `blogger_blog/scripts/get_blogger_token.py` |
 | `BLOGGER_BLOG_ID` | ✅ | Blogger 관리 URL 의 숫자 부분 |
+| `BLOGGER_CONTACT_EMAIL` | ✅ | 고정 페이지에 표시할 문의용 이메일 |
+| `BLOGGER_BLOG_NAME` | ⏳ | 블로그 이름 (비우면 Blogger 설정값) |
 | `BLOGGER_LABELS_EXTRA` | ⏳ | 모든 글 공통 라벨 (콤마 구분) |
 
-> ⚠️ 이 저장소는 **public** 입니다 (Actions 분 수 무제한). API 키는 반드시
-> Secrets 에만 넣고, 문서·코드에 평문으로 적지 마세요.
+> ⚠️ 이 저장소는 **public** 입니다. API 키와 이메일 주소는 반드시 Secrets 에만
+> 넣고, 문서·코드에 평문으로 적지 마세요. 그래서 고정 페이지 템플릿도
+> `{{CONTACT_EMAIL}}` 토큰만 갖고 있습니다.
 
 ## 비용
 
@@ -52,8 +118,7 @@ YouTube 자동화 저장소(`1230-png/Soop1230` — `@200-y3b`, `@reality_bizarr
 | Blogger API v3 | ✅ 무료 |
 | Google Cloud 프로젝트 | ✅ 무료 (Blogger API v3 "사용 설정"만 하면 됨) |
 
-TTS·영상 생성이 없어 ElevenLabs 무료 할당량(10k자/월)을 전혀 쓰지 않습니다.
-
 ## 자세한 설정
 
-**→ [`blogger_blog/SETUP.md`](blogger_blog/SETUP.md)**
+- 최초 설정: [`blogger_blog/SETUP.md`](blogger_blog/SETUP.md)
+- 애드센스 반려 대응: [`blogger_blog/ADSENSE_FIX.md`](blogger_blog/ADSENSE_FIX.md)

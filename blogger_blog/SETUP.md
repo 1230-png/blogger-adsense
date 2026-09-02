@@ -70,31 +70,48 @@ python blogger_blog/scripts/get_blogger_token.py client_secret.json
 | `BLOGGER_CLIENT_ID` | ✅ | 1-3 단계에서 발급 |
 | `BLOGGER_CLIENT_SECRET` | ✅ | 1-3 단계에서 발급 |
 | `BLOGGER_BLOG_ID` | ✅ | 1-1 단계에서 메모한 숫자 ID |
+| `BLOGGER_CONTACT_EMAIL` | ✅ | 소개·문의·개인정보처리방침 페이지에 표시할 이메일 |
+| `BLOGGER_BLOG_NAME` | ⏳ 선택 | 페이지에 표시할 블로그 이름 (비우면 Blogger 설정값) |
 | `BLOGGER_LABELS_EXTRA` | ⏳ 선택 | 모든 글에 공통으로 붙일 라벨(콤마 구분) |
 
 Repository → Settings → Secrets and variables → Actions → New repository secret 에서 등록합니다.
+
+> ⚠️ 이 저장소는 **public** 입니다. `BLOGGER_CONTACT_EMAIL` 을 파일에 직접
+> 적지 마세요. 고정 페이지 템플릿(`blogger_blog/pages/*.html`)은
+> `{{CONTACT_EMAIL}}` 토큰만 갖고 있고, 값은 발행 시점에 주입됩니다.
 
 ---
 
 ## 3. 동작 방식
 
 ```
-09:00 / 21:00 KST ──→ data/topics.csv 에서 아직 안 쓴 주제 1개 선정
-            ├─ Groq로 서론+소제목4~6개+결론 구조의 글 생성 (최소 1,200자 강제)
-            ├─ Blogger API로 발행 (즉시 공개)
-            └─ data/used_topics.json 에 발행 기록 추가 후 커밋
+09:00 KST ──→ pytest 로 품질 게이트 자체를 먼저 검사
+         ├─ data/topics.csv 에서 아직 안 쓴 주제 1개 선정
+         ├─ Groq로 글 생성 → 요약 표 + 소제목 5~7개 + 내부 링크 3개로 조립
+         │   └ 산문 1,600자 미만이면 한 번 재생성, 그래도 미달이면 중단
+         ├─ quality.py 게이트 통과 시에만 Blogger 발행
+         │   └ 미달이면 발행하지 않고 그날을 건너뛴다 (워크플로 실패는 정상)
+         └─ data/used_topics.json 에 발행 기록 추가 후 커밋
 ```
 
 - `workflow_dispatch`로 수동 실행도 가능하며, `category` 입력값으로
   `finance / health / tech / life / self_dev` 중 하나를 지정할 수 있습니다.
   비워두면 전체 카테고리 중 무작위로 선택합니다.
 - 예약 실행 시각은 `.github/workflows/blogger_blog_daily.yml` 의
-  `cron: '0 0,12 * * *'`(UTC) = **매일 09:00 / 21:00 KST**, 하루 2편입니다.
-  GitHub 예약 실행은
-  정상적으로 25~60분 늦게 시작될 수 있으며, 고장이 아닙니다.
-- 초반에 애드센스 재심사에 필요한 게시글 수를 빨리 채우고 싶다면, Actions 탭에서
-  **Run workflow**를 여러 번 수동 실행할 수 있습니다. 다만 스팸성 대량 발행으로
-  보이지 않도록 며칠에 걸쳐 나눠 발행하는 것을 권장합니다.
+  `cron: '0 0 * * *'`(UTC) = **매일 09:00 KST**, 하루 1편입니다.
+  GitHub 예약 실행은 정상적으로 25~60분 늦게 시작될 수 있으며, 고장이 아닙니다.
+- **글 수를 빨리 채우려고 수동 실행을 반복하지 마세요.** 사람 검토 없이
+  LLM으로 만든 글을 몰아서 올리는 것은 Google이 *scaled content abuse*로
+  설명하는 패턴이고, 애드센스 반려 사유였던 "가치가 별로 없는 콘텐츠"와 같은
+  뿌리입니다. 하루 2편에서 1편으로 줄인 것도 같은 이유입니다.
+  자세한 내용은 [`ADSENSE_FIX.md`](ADSENSE_FIX.md) 를 참고하세요.
+
+### 다른 워크플로
+
+| 워크플로 | 실행 | 하는 일 |
+|---|---|---|
+| **Blogger AdSense Audit** | 매주 월 10:00 KST + 수동 | 발행된 글 전체를 진단해 리포트 생성. 미달이 있으면 실패(빨간 X)로 끝난다 — **재심사 요청 전에 초록불인지 확인하는 용도** |
+| **Blogger Required Pages** | 수동 | 소개·문의·개인정보처리방침·면책조항 페이지 게시. 여러 번 돌려도 안전 |
 
 ---
 
@@ -143,11 +160,20 @@ Groq 에 넘겨 **새 세부 주제를 만들어냅니다.** 생성된 후보는
 
 ## 6. 애드센스 신청/재심사 체크리스트
 
-- [ ] 최소 20~30편 이상 발행 (업계 통용 안전 기준, 구글 공식 수치 아님)
-- [ ] 각 글이 실질적인 정보를 담고 있는지 직접 몇 편 읽어보고 확인
-- [ ] Blogger 관리 화면 → 레이아웃/라벨 등 사이트 구조 정리
-- [ ] 개인정보처리방침, 블로그 소개 페이지 등록 (Blogger는 "페이지" 메뉴로 추가)
-- [ ] Blogger 관리 화면의 **수익(AdSense)** 탭에서 애드센스 연동 신청
+> 반려된 상태에서 무엇을 어떤 순서로 해야 하는지는
+> **[`ADSENSE_FIX.md`](ADSENSE_FIX.md)** 에 자세히 정리돼 있습니다.
+
+- [ ] `BLOGGER_CONTACT_EMAIL` 시크릿 등록
+- [ ] **Blogger Required Pages** 워크플로 실행 → 필수 페이지 4종 게시
+- [ ] Blogger 관리 화면 → 레이아웃 → **페이지 가젯 추가**로 네 페이지 모두 노출
+      (페이지를 만들어도 메뉴에 걸지 않으면 심사자가 찾지 못합니다)
+- [ ] `blogger_blog/pages/about.html` 을 본인 이야기로 수정 후 재실행
+- [ ] **Blogger AdSense Audit** 워크플로 실행 → 미달 글 목록 확인
+- [ ] 미달 글을 보강 / 통합 / 비공개 처리 (자동화 불가, 직접 읽고 판단)
+- [ ] 감사 워크플로가 **초록불**이 된 것을 확인
+- [ ] Blogger 관리 화면의 **수익(AdSense)** 탭에서 재심사 요청
+
+> ⚠️ 빨간불 상태로 재심사를 요청하지 마세요. 반복 반려는 불리하게 작용합니다.
 
 ---
 
