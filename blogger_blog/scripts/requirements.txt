@@ -2,3 +2,7 @@ requests==2.34.2
 google-auth==2.32.0
 google-auth-oauthlib==1.2.1
 google-api-python-client==2.140.0
+
+# 품질 게이트 테스트용. 발행 전에 워크플로가 pytest 를 돌리므로 런타임
+# 의존성과 같은 파일에 둔다 (설치를 두 번 하지 않기 위해).
+pytest==8.3.3
