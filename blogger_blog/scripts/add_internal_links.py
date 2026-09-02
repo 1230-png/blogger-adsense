@@ -47,6 +47,25 @@ def render_block(related: list) -> str:
     return f"\n<h2>{BLOCK_HEADING}</h2>\n<ul>{items}</ul>"
 
 
+def update_body(post: dict, new_content: str) -> dict:
+    """posts().update() 에 보낼 본문.
+
+    ⚠️ Blogger 의 update 는 PATCH 가 아니라 **리소스 전체 교체**다. 보내지 않은
+    필드는 지워진다. 실제로 이 스크립트의 첫 판이 title/content 만 보내는 바람에
+    발행된 12편의 라벨이 전부 날아갔다. 유지해야 하는 필드는 반드시 여기서
+    되실어 보낸다.
+    """
+    body = {
+        "kind": "blogger#post",
+        "title": post.get("title", ""),
+        "content": new_content,
+        "labels": list(post.get("labels") or []),
+    }
+    if post.get("customMetaData"):
+        body["customMetaData"] = post["customMetaData"]
+    return body
+
+
 def pick_related(post: dict, others: list, limit: int = LINK_COUNT) -> list:
     """같은 라벨을 공유하는 글 우선, 모자라면 최신순으로 채운다."""
     labels = set(post.get("labels") or [])
@@ -111,7 +130,7 @@ def main():
             service.posts().update(
                 blogId=blog_id,
                 postId=post["id"],
-                body={"kind": "blogger#post", "title": title, "content": new_content},
+                body=update_body(post, new_content),
             ).execute()
             changed += 1
             print(f"🔗 링크 추가: {title}", file=sys.stderr)

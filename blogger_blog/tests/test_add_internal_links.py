@@ -106,3 +106,38 @@ def test_generate_post와_같은_블록_제목을_쓴다():
         [{"url": f"https://{HOST}/a.html", "title": "다른 글", "topic": "t"}],
     )
     assert ail.BLOCK_HEADING in html
+
+
+# --- 회귀: 라벨 삭제 사고 --------------------------------------------------
+#
+# 이 스크립트의 첫 판이 posts().update() 에 title/content 만 보냈다.
+# Blogger 의 update 는 PATCH 가 아니라 리소스 전체 교체라서, 발행 중이던
+# 12편의 라벨이 전부 지워졌다. 다시는 일어나면 안 되는 일이다.
+
+
+def test_수정_본문에_라벨을_반드시_실어_보낸다():
+    original = post("1", "제목", ["재테크", "청약"], "2026-08-22T00:00:00Z")
+    body = ail.update_body(original, "<p>새 본문</p>")
+    assert body["labels"] == ["재테크", "청약"]
+    assert body["content"] == "<p>새 본문</p>"
+    assert body["title"] == "제목"
+
+
+def test_라벨이_없는_글은_빈_목록으로_보낸다():
+    original = dict(post("1", "제목", [], "2026-08-22T00:00:00Z"))
+    del original["labels"]
+    assert ail.update_body(original, "<p>x</p>")["labels"] == []
+
+
+def test_custom_meta_data도_유지한다():
+    original = dict(post("1", "제목", ["재테크"], "2026-08-22T00:00:00Z"))
+    original["customMetaData"] = '{"description": "요약"}'
+    assert ail.update_body(original, "<p>x</p>")["customMetaData"] == '{"description": "요약"}'
+
+
+def test_원본_라벨_목록을_공유하지_않는다():
+    """body 의 labels 를 나중에 건드려도 원본이 바뀌면 안 된다."""
+    original = post("1", "제목", ["재테크"], "2026-08-22T00:00:00Z")
+    body = ail.update_body(original, "<p>x</p>")
+    body["labels"].append("오염")
+    assert original["labels"] == ["재테크"]

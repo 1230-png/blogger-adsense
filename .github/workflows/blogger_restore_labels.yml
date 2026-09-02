@@ -1,0 +1,60 @@
+name: Blogger Restore Labels
+
+# 라벨이 비어 있는 발행 글에 카테고리 라벨을 되살린다.
+#
+# add_internal_links.py 의 첫 판이 posts().update() 에 title/content 만
+# 보냈는데, Blogger 의 update 는 PATCH 가 아니라 리소스 전체 교체라서
+# 발행 중이던 12편의 라벨이 지워졌다. 그 사고를 되돌리기 위한 워크플로다.
+#
+# 되살릴 수 있는 것은 used_topics.json 에 남은 카테고리 하나뿐이다.
+# LLM 이 붙였던 세부 태그는 Blogger API 로 복원할 수 없다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: '실제로 복구 (끄면 미리보기)'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blogger-restore-labels
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r blogger_blog/scripts/requirements.txt
+
+      - name: 복구 로직 자체 테스트
+        run: python -m pytest blogger_blog/tests/test_restore_labels.py -q
+
+      - name: 라벨 복구
+        env:
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+        run: |
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            python blogger_blog/scripts/restore_labels.py --apply
+          else
+            python blogger_blog/scripts/restore_labels.py
+          fi
