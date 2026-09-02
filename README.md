@@ -3,9 +3,11 @@
 Groq + Google Blogger API v3 로 정보성 블로그 글을 자동 발행하는 파이프라인.
 **전부 무료 티어**로 동작합니다.
 
-> ⚠️ **애드센스가 "가치가 별로 없는 콘텐츠"로 반려한 상태라면
-> → [`blogger_blog/ADSENSE_FIX.md`](blogger_blog/ADSENSE_FIX.md) 를 먼저 읽으세요.**
-> 원인 분석과, 코드로 고친 것 / 사람이 해야 하는 것이 순서대로 정리돼 있습니다.
+> ⚠️ **애드센스 반려 상태라면 아래 두 문서를 먼저 읽으세요.** 반려 통지에는
+> 위반이 **두 건** 들어 있고, 한 건만 고치면 나머지로 다시 반려됩니다.
+>
+> - 위반 1 (가치가 별로 없는 콘텐츠) → [`blogger_blog/ADSENSE_FIX.md`](blogger_blog/ADSENSE_FIX.md)
+> - 위반 2 (게시자 콘텐츠가 없는 화면의 광고) → [`blogger_blog/ADS_PLACEMENT.md`](blogger_blog/ADS_PLACEMENT.md)
 
 ## 왜 별도 저장소인가
 
@@ -30,13 +32,15 @@ blogger_blog/
 │   ├── publish_post.py     발행 (게이트 미달이면 발행 중단)
 │   ├── publish_pages.py    필수 고정 페이지 게시
 │   ├── audit_blog.py       발행된 글 전체 진단 → 리포트
+│   ├── prune_posts.py      품질 순 상위 N편만 유지, 나머지는 초안 전환
 │   └── get_blogger_token.py  OAuth refresh token 발급 (로컬 1회)
 ├── pages/                  소개·문의·개인정보처리방침·면책조항 템플릿
 ├── data/
 │   ├── topics.csv          주제 후보 250개
 │   └── used_topics.json    발행 기록 (내부 링크 생성에도 쓰임)
 ├── tests/                  pytest — 네트워크·자격증명 불필요
-├── ADSENSE_FIX.md          반려 대응 문서 ★
+├── ADSENSE_FIX.md          반려 대응 — 위반 1 (콘텐츠) ★
+├── ADS_PLACEMENT.md        반려 대응 — 위반 2 (광고 위치) ★
 └── SETUP.md                최초 설정
 ```
 
@@ -61,6 +65,7 @@ blogger_blog/
 | **Blogger Blog Daily** | 매일 09:00 KST | 글 1편 생성·발행 |
 | **Blogger AdSense Audit** | 매주 월 10:00 KST + 수동 | 발행된 글 전체 진단 → 리포트 |
 | **Blogger Required Pages** | 수동 | 필수 고정 페이지 4종 게시 |
+| **Blogger Prune Posts** | 수동 | 품질 상위 N편만 남기고 나머지 초안 전환 |
 
 수동 실행은 Actions 탭 → **Run workflow**.
 

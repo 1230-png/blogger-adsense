@@ -15,3 +15,5 @@ publish_result.json
 
 # 감사 리포트 (워크플로 아티팩트로 남기므로 커밋하지 않는다)
 audit_report.md
+
+prune_report.md

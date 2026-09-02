@@ -1,0 +1,101 @@
+name: Blogger Prune Posts
+
+# 품질 순으로 줄을 세워 상위 N편만 남기고 나머지를 초안으로 내린다.
+#
+# 얇은 글 24편보다 충실한 글 12편이 심사에 유리하다. 삭제가 아니라 초안
+# 전환이라 되돌릴 수 있지만, 되돌려도 주소(URL)는 보장되지 않는다.
+# 그래서 자동 스케줄을 두지 않고, apply 를 명시적으로 켜야만 실제로 손댄다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: '남길 글 수'
+        required: true
+        default: '12'
+      apply:
+        description: '실제로 초안 전환 (끄면 미리보기만)'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: blogger-prune
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r blogger_blog/scripts/requirements.txt
+
+      - name: 선별 로직 자체 테스트
+        run: python -m pytest blogger_blog/tests/test_prune_posts.py -q
+
+      - name: 선별 실행
+        env:
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+        run: |
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            python blogger_blog/scripts/prune_posts.py \
+              --keep "${{ inputs.keep }}" --apply --report prune_report.md > /dev/null
+          else
+            python blogger_blog/scripts/prune_posts.py \
+              --keep "${{ inputs.keep }}" --report prune_report.md > /dev/null
+          fi
+
+      # 어떤 글을 내렸는지가 되돌릴 때 필요한 유일한 기록이다.
+      # 실패했을 때도 반드시 남긴다.
+      - name: 리포트를 실행 요약에 표시
+        if: always()
+        run: |
+          if [ -f prune_report.md ]; then
+            cat prune_report.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ 리포트가 생성되지 않았습니다. 자격증명(BLOGGER_*)을 확인하세요." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 리포트 아티팩트 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prune-report
+          path: prune_report.md
+          if-no-files-found: warn
+
+      # 내려간 글이 발행 기록에 남아 있으면, 다음 글이 이제 존재하지 않는
+      # 주소를 '함께 읽으면 좋은 글'로 링크한다.
+      - name: 발행 기록 커밋
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add blogger_blog/data/used_topics.json
+          if git diff --cached --quiet; then
+            echo "발행 기록 변경 없음"
+          else
+            git commit -m "chore: 초안 전환된 글을 발행 기록에서 제거 [skip ci]"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi
