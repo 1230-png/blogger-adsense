@@ -1,0 +1,55 @@
+name: Blogger Dump Post
+
+# 발행된 글의 본문을 실행 로그에 그대로 찍는다.
+#
+# 감사(audit)는 지표만 본다. 지표가 전부 초록불인데 심사에서 계속 반려되면
+# 남은 원인은 본문 자체이고, 그건 사람이 읽어야 안다. 블로그에 직접 접근할
+# 수 없는 환경에서도 Blogger API 로 본문을 꺼내 오려고 만든 워크플로다.
+#
+# 읽기 전용이다. 글을 고치지 않는다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        description: '최신순으로 몇 편을 볼지'
+        required: false
+        default: '3'
+      url:
+        description: '특정 글 하나만 (주소). 비우면 최신순'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r blogger_blog/scripts/requirements.txt
+
+      - name: 본문 출력
+        env:
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+        run: |
+          ARGS=(--count "${{ inputs.count }}")
+          if [ -n "${{ inputs.url }}" ]; then
+            ARGS=(--url "${{ inputs.url }}")
+          fi
+          python blogger_blog/scripts/dump_post.py "${ARGS[@]}"
