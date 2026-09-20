@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -60,6 +61,14 @@ MAX_TOKENS = 6000
 
 # 붙일 내부 링크 개수. 너무 많으면 링크 목록이 본문보다 눈에 띈다.
 RELATED_LINK_COUNT = 3
+
+# 429(요청 한도) 대응. 무료 티어는 분당 한도와 하루 한도가 따로 있는데,
+# 분당 한도는 몇 초 기다리면 풀리고 하루 한도는 그렇지 않다. retry-after 가
+# 이 상한을 넘으면 기다리지 않고 바로 알린다 — 워크플로를 타임아웃까지
+# 매달아 두는 것보다 낫다.
+RATE_LIMIT_RETRIES = 3
+DEFAULT_RETRY_WAIT = 20.0
+MAX_RETRY_WAIT = 90.0
 
 # 카테고리별로 글 끝에 붙는 한 줄 고지. YMYL(돈·건강) 주제에서는 형식이 아니라
 # 실제로 필요하다. 다만 모든 글에 그대로 반복되므로 한 문장만 쓴다 — 길어지면
@@ -141,6 +150,23 @@ HTML 태그는 쓰지 말고 순수 텍스트로만 작성하세요."""
 # --- LLM 호출 -----------------------------------------------------------------
 
 
+def _retry_after(response) -> float:
+    """429 응답이 알려 주는 대기 시간(초). 없으면 기본값."""
+    header = response.headers.get("retry-after", "")
+    try:
+        return max(0.0, float(header))
+    except (TypeError, ValueError):
+        return DEFAULT_RETRY_WAIT
+
+
+def _error_detail(response) -> str:
+    """429 본문에 담긴 설명. 분당 한도인지 하루 한도인지가 여기 적힌다."""
+    try:
+        return str(response.json().get("error", {}).get("message", ""))[:300]
+    except Exception:
+        return response.text[:300]
+
+
 def _call_groq(topic: str, category_label: str, extra_instruction: str = "") -> dict:
     prompt = f"""다음 주제로 블로그 글을 작성하세요.
 
@@ -151,23 +177,46 @@ def _call_groq(topic: str, category_label: str, extra_instruction: str = "") -> 
 JSON으로만 반환하세요."""
 
     for model in GROQ_MODEL_CANDIDATES:
-        response = requests.post(
-            GROQ_API_URL,
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_MESSAGE},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.7,
-                "max_tokens": MAX_TOKENS,
-            },
-            timeout=120,
-        )
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            response = requests.post(
+                GROQ_API_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_MESSAGE},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": MAX_TOKENS,
+                },
+                timeout=120,
+            )
+
+            # 429 는 두 가지다. 분당 한도면 몇 초 기다리면 풀리고, 하루 한도면
+            # 몇 시간을 기다려야 한다. Groq 는 retry-after 로 그 차이를
+            # 알려 주므로, 감당할 만한 값일 때만 기다린다. 무작정 재시도하면
+            # 워크플로가 타임아웃까지 매달린다.
+            if response.status_code != 429:
+                break
+
+            wait = _retry_after(response)
+            if attempt >= RATE_LIMIT_RETRIES or wait > MAX_RETRY_WAIT:
+                detail = _error_detail(response)
+                raise RuntimeError(
+                    f"Groq 요청 한도(429)에 걸렸습니다. {wait:.0f}초 뒤에 풀립니다"
+                    + (f" — {detail}" if detail else "")
+                    + ". 분 단위 한도면 잠시 뒤 다시 돌리면 되고, 하루 한도면 "
+                    "날짜가 바뀐 뒤에 이어서 돌리세요."
+                )
+            print(
+                f"⏳ 요청 한도(429). {wait:.0f}초 기다렸다가 다시 시도합니다.",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
 
         # 404 는 "그런 모델이 없다"는 뜻이다(키가 틀리면 401). 퇴역한 모델일 수
         # 있으므로 다음 후보로 넘어간다.

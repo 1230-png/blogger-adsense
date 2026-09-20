@@ -187,3 +187,57 @@ def test_산문_기준을_넘기면_렌더_기준도_넘는다():
 
     html = gp.render_html(response, PUBLISHED, gp.CATEGORY_NOTICE["finance"])
     assert quality.text_length(html) >= quality.MIN_TEXT_CHARS
+
+
+# --- 요청 한도(429) 처리 ------------------------------------------------------
+#
+# 실제로 겪은 일: 기존 글 9편을 한 번에 다시 쓰다가 네 번째에서 429 가 났고,
+# 재시도가 없어 남은 6편이 그대로 건너뛰어졌다. 429 는 분당 한도(몇 초면 풀림)
+# 와 하루 한도(몇 시간)가 섞여 오므로, 기다릴 값인지 판단해야 한다.
+
+
+class _FakeResponse:
+    def __init__(self, status_code=429, headers=None, payload=None, text=""):
+        self.status_code = status_code
+        self.headers = headers or {}
+        self._payload = payload
+        self.text = text
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("본문이 JSON 이 아닙니다")
+        return self._payload
+
+
+def test_retry_after_헤더를_초로_읽는다():
+    assert gp._retry_after(_FakeResponse(headers={"retry-after": "12.5"})) == 12.5
+
+
+def test_retry_after가_없으면_기본값을_쓴다():
+    assert gp._retry_after(_FakeResponse()) == gp.DEFAULT_RETRY_WAIT
+
+
+def test_retry_after가_숫자가_아니면_기본값을_쓴다():
+    """Groq 가 HTTP-date 형식으로 줄 수도 있다. 그때 죽으면 안 된다."""
+    resp = _FakeResponse(headers={"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"})
+    assert gp._retry_after(resp) == gp.DEFAULT_RETRY_WAIT
+
+
+def test_음수_retry_after는_0으로_본다():
+    assert gp._retry_after(_FakeResponse(headers={"retry-after": "-5"})) == 0.0
+
+
+def test_한도_설명을_본문에서_꺼낸다():
+    """분당 한도인지 하루 한도인지가 여기 적혀 있어 사람이 판단할 근거가 된다."""
+    resp = _FakeResponse(payload={"error": {"message": "Rate limit reached for model"}})
+    assert "Rate limit reached" in gp._error_detail(resp)
+
+
+def test_본문이_JSON이_아니어도_설명을_만든다():
+    assert gp._error_detail(_FakeResponse(text="<html>429</html>")) == "<html>429</html>"
+
+
+def test_기다릴_수_있는_한도만_기다린다():
+    """하루 한도까지 기다리면 워크플로가 타임아웃까지 매달린다."""
+    assert gp.MAX_RETRY_WAIT < 24 * 60 * 60
+    assert gp.DEFAULT_RETRY_WAIT <= gp.MAX_RETRY_WAIT
