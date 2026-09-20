@@ -28,14 +28,16 @@ def post(pid, title, content, labels=("건강",)):
     }
 
 
-def body(text):
-    """게이트의 다른 항목(분량·구조·링크)은 통과하도록 살을 붙인다.
+def body(text, *, repeat=18):
+    """게이트의 다른 항목(구조·링크)은 통과하도록 살을 붙인다.
 
-    그래야 이 테스트가 '수치' 하나만 보고 있다는 게 분명해진다.
+    그래야 이 테스트가 보려는 항목 하나만 보고 있다는 게 분명해진다.
+    repeat 를 줄이면 구조는 멀쩡한 채로 분량만 모자란 글이 된다 — 실제로
+    마지막까지 남았던 '운동 후 근육통' 글이 그 모양이었다.
     """
     filler = "".join(
         f"<h2>소제목 {i}</h2><p>{text} 여기서는 {i}번째 관점으로 살펴봅니다. "
-        + ("실제로 확인해야 할 지점을 순서대로 짚어 보겠습니다. " * 12)
+        + ("실제로 확인해야 할 지점을 순서대로 짚어 보겠습니다. " * repeat)
         + "</p>"
         for i in range(1, 6)
     )
@@ -91,3 +93,67 @@ def test_내부_링크는_렌더가_받는_모양으로_나온다():
     assert len(related) == 2
     assert all(set(r) == {"url", "title"} for r in related)
     assert all(r["url"] != PERCENT["url"] for r in related)
+
+
+# --- 다시 써서 풀 수 있는 사유만 고른다 ---------------------------------------
+#
+# 감사가 마지막 1편을 분량 미달(thin_body)로 막고 있었는데, 선별이 수치 문제만
+# 보고 있어서 그 글을 놓쳤다. 반대로 다시 써도 안 풀리는 사유까지 집어 오면
+# LLM 호출만 버린다. 두 방향을 모두 고정해 둔다.
+
+
+# 소제목도 링크도 있는데 분량만 모자란 글. 막는 사유가 thin_body 하나뿐이다.
+SHORT = post("short", "운동 후 근육통 회복법",
+             body("가볍게 움직이는 편이 낫습니다.", repeat=3))
+
+
+def test_분량이_모자란_글도_다시_쓸_대상이다():
+    report = rw.quality.check_post(SHORT, blog_host=HOST)
+    codes = {f.code for f in report.findings if f.severity == rw.quality.BLOCK}
+    assert codes == {"thin_body"}, codes   # 막는 사유가 분량 하나뿐인지 먼저 확인
+
+    picked = rw.select([SHORT], blog_host=HOST, min_hard=MIN_HARD)
+    assert [p["id"] for p, _ in picked] == ["short"]
+
+
+def test_다시_써도_안_풀리는_사유가_섞이면_건너뛴다():
+    """예: 다른 글과 문장이 겹치는 글. 다시 써도 같은 이유로 또 막힌다."""
+    same = "<p>같은 문장입니다. 이 문장도 똑같습니다. 세 번째 문장도 같습니다.</p>" * 20
+    twins = [post("t1", "쌍둥이 글 하나", same), post("t2", "쌍둥이 글 둘", same)]
+    picked = rw.select(twins, blog_host=HOST, min_hard=MIN_HARD)
+    codes = set()
+    for p in twins:
+        report = rw.quality.check_post(p, blog_host=HOST,
+                                       shared_sentences=rw.quality.build_shared_sentences(twins))
+        codes |= {f.code for f in report.findings if f.severity == rw.quality.BLOCK}
+    assert "templated" in codes          # 실제로 겹침 판정이 났고
+    assert picked == []                  # 그래서 대상에서 빠졌다
+
+
+def test_지시문이_차단_사유에_맞춰_달라진다():
+    """분량이 모자란 글에 '수치를 쓰지 말라'고만 하면 더 짧아진다."""
+    thin = rw.instruction_for({"thin_body"})
+    figures = rw.instruction_for({"unverified_figures"})
+    assert "섹션을 7개까지" in thin
+    assert "섹션을 7개까지" not in figures
+    assert "수치를 쓰지 마십시오" in figures
+
+
+def test_두_사유가_함께면_지시문도_둘_다_담는다():
+    both = rw.instruction_for({"thin_body", "unverified_figures"})
+    assert "섹션을 7개까지" in both
+    assert "수치를 쓰지 마십시오" in both
+
+
+def test_사유를_모르면_기본_지시문만_쓴다():
+    assert rw.instruction_for(set()) == rw.BASE_INSTRUCTION
+
+
+def test_분량_미달_글도_금액이_뼈대면_내리는_쪽이다():
+    short_money = post(
+        "sm", "특별공급 요약",
+        "<p>연소득 4,500만원 이하, 자산 3억 원 미만, 만 39세 이하입니다.</p>",
+        labels=("재테크",),
+    )
+    assert rw.select([short_money], blog_host=HOST, min_hard=MIN_HARD) == []
+    assert [p["id"] for p, _, _ in up.select([short_money], min_hard=MIN_HARD, title_contains=[])] == ["sm"]

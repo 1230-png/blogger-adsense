@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""이미 발행된 글의 본문을, 수치를 지어내지 않는 프롬프트로 다시 쓴다.
+"""게이트에 걸린 기존 글의 본문을, 고친 프롬프트로 다시 쓴다.
 
-수치를 지어낸 글은 두 갈래로 처리한다 (quality.HARD_CLAIM_KINDS 주석 참고).
-금액·연령·법령 조항이 뼈대인 글은 unpublish_posts.py 로 내린다. 여기서 다루는
-것은 나머지 — 비율(%)·기간처럼 **수치를 빼도 글이 성립하는** 경우다.
+두 가지 차단 사유를 다룬다 (REWRITABLE_CODES).
+
+- `unverified_figures` — 자료 없이 지어낸 수치. 단, 금액·연령·법령 조항이
+  뼈대인 글은 unpublish_posts.py 로 내린다 (quality.HARD_CLAIM_KINDS 주석 참고).
+  여기서 다루는 것은 비율(%)·기간처럼 **수치를 빼도 글이 성립하는** 경우다.
+- `thin_body` — 분량 미달. 더 길게 쓰면 풀린다.
 
     python blogger_blog/scripts/rewrite_posts.py                 # 미리보기
     python blogger_blog/scripts/rewrite_posts.py --apply         # 실제로 교체
@@ -49,13 +52,39 @@ CALL_INTERVAL = 3.0
 # 한 글에 허용하는 생성 시도 횟수. 첫 응답이 게이트에 걸리면 한 번 더 부탁한다.
 MAX_ATTEMPTS = 2
 
-REWRITE_INSTRUCTION = (
-    "이 주제로 이미 발행된 글이 있는데, 자료 없이 지어낸 비율·기간 수치가 섞여 "
-    "있어 다시 씁니다. 같은 주제를 다루되 **구체적인 비율·기간·금액 수치를 쓰지 "
-    "마십시오.** '약 몇 퍼센트'처럼 얼버무리는 것도 안 됩니다. 수치 대신 "
-    "방향(늘어난다/줄어든다), 판단 기준, 확인 방법, 흔한 실수를 구체적으로 "
-    "쓰십시오. 그렇게 해도 분량은 충분히 나옵니다."
-)
+# 본문을 다시 써서 풀 수 있는 차단 사유.
+#
+# - unverified_figures: 수치를 빼고 쓰면 된다 (금액이 뼈대인 글은 아래 min_hard
+#   로 걸러져 unpublish_posts.py 쪽으로 간다)
+# - thin_body: 더 길게 쓰면 된다
+#
+# 여기 없는 사유(예: templated — 다른 글과 문장이 겹침)가 섞여 있으면 다시
+# 써도 같은 이유로 또 막히므로 건너뛴다. 그런 글은 사람이 봐야 한다.
+REWRITABLE_CODES = frozenset({"unverified_figures", "thin_body"})
+
+BASE_INSTRUCTION = "이 주제로 이미 발행된 글이 있는데, 아래 이유로 다시 씁니다."
+
+# 차단 사유별로 덧붙이는 지시. 분량이 모자란 글에 "수치를 쓰지 말라"고만 하면
+# 모델은 더 짧게 쓰는 쪽으로 움직인다.
+CODE_INSTRUCTIONS = {
+    "unverified_figures": (
+        "자료 없이 지어낸 비율·기간 수치가 섞여 있습니다. 같은 주제를 다루되 "
+        "**구체적인 비율·기간·금액 수치를 쓰지 마십시오.** '약 몇 퍼센트'처럼 "
+        "얼버무리는 것도 안 됩니다. 수치 대신 방향(늘어난다/줄어든다), 판단 "
+        "기준, 확인 방법, 흔한 실수를 구체적으로 쓰십시오."
+    ),
+    "thin_body": (
+        "본문이 짧습니다. 섹션을 7개까지 늘리고 각 섹션의 설명을 더 풀어 "
+        "쓰십시오. **다만 분량을 채우려고 수치를 지어내는 것은 최악입니다.** "
+        "절차, 준비물, 판단 기준, 흔한 실수를 더 자세히 쓰는 쪽으로 채우십시오."
+    ),
+}
+
+
+def instruction_for(codes) -> str:
+    """차단 사유에 맞는 재작성 지시문."""
+    parts = [CODE_INSTRUCTIONS[c] for c in sorted(codes) if c in CODE_INSTRUCTIONS]
+    return "\n".join([BASE_INSTRUCTION, *parts]) if parts else BASE_INSTRUCTION
 
 
 def slug_for(post: dict) -> str:
@@ -68,16 +97,19 @@ def slug_for(post: dict) -> str:
 def select(posts: list, *, blog_host: str, min_hard: int) -> list:
     """다시 쓸 글 목록.
 
-    조건은 두 가지다. (1) 품질 게이트가 수치로 막고 있다, (2) 그 수치가
-    금액·연령·법령 조항이 아니어서 내릴 대상이 아니다. 둘째 조건이 없으면
-    unpublish_posts.py 와 같은 글을 두고 다투게 된다.
+    조건은 두 가지다. (1) 게이트가 아래 사유로 막고 있다, (2) 그 글이 내릴
+    대상이 아니다. 둘째 조건이 없으면 unpublish_posts.py 와 같은 글을 두고
+    다투게 된다.
     """
     shared = quality.build_shared_sentences(posts)
     picked = []
     for post in posts:
         report = quality.check_post(post, blog_host=blog_host, shared_sentences=shared)
         codes = {f.code for f in report.findings if f.severity == quality.BLOCK}
-        if "unverified_figures" not in codes:
+        if not (codes & REWRITABLE_CODES):
+            continue
+        # 고칠 수 없는 사유가 하나라도 섞여 있으면 다시 써도 소용없다.
+        if codes - REWRITABLE_CODES:
             continue
         if len(quality.hard_claims(post.get("content") or "")) >= min_hard:
             continue
@@ -93,7 +125,7 @@ def related_for(post: dict, posts: list, limit: int) -> list:
     ]
 
 
-def rewrite_one(post: dict, posts: list, *, blog_host: str, limit: int):
+def rewrite_one(post: dict, posts: list, *, blog_host: str, limit: int, before=None):
     """새 본문을 만들어 (본문, 리포트)로 돌려준다. 실패하면 (None, 마지막리포트)."""
     title = post.get("title", "")
     slug = slug_for(post)
@@ -101,8 +133,13 @@ def rewrite_one(post: dict, posts: list, *, blog_host: str, limit: int):
     related = related_for(post, posts, limit)
     notice = generate_post.CATEGORY_NOTICE.get(slug, "")
 
+    codes = set()
+    if before is not None:
+        codes = {f.code for f in before.findings if f.severity == quality.BLOCK}
+    base = instruction_for(codes)
+
     last_report = None
-    instruction = REWRITE_INSTRUCTION
+    instruction = base
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
@@ -130,7 +167,7 @@ def rewrite_one(post: dict, posts: list, *, blog_host: str, limit: int):
         reasons = "; ".join(f.message[:60] for f in report.findings if f.severity == quality.BLOCK)
         print(f"   ⚠️ {attempt}회차 게이트 미달 — {reasons}", file=sys.stderr)
         instruction = (
-            REWRITE_INSTRUCTION
+            base
             + f"\n\n이전 답변이 다음 이유로 반려됐습니다: {reasons}\n"
             "특히 숫자는 하나도 쓰지 말고, 섹션을 7개까지 늘려 분량을 채우십시오."
         )
@@ -197,7 +234,9 @@ def main():
         title = post.get("title", "")
         print(f"\n[{index}/{len(targets)}] ✍️ {title}", file=sys.stderr)
 
-        content, after = rewrite_one(post, posts, blog_host=host, limit=args.links)
+        content, after = rewrite_one(
+            post, posts, blog_host=host, limit=args.links, before=before
+        )
         if content is None:
             skipped += 1
             print("   ⏭️ 게이트를 통과하는 본문을 못 만들어 원본을 그대로 둡니다.", file=sys.stderr)
