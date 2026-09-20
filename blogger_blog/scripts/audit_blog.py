@@ -27,7 +27,8 @@ def _fmt_metrics(m: dict) -> str:
     return (
         f"{m['text_chars']}자 · 소제목 {m['headings']} · 문단 {m['paragraphs']} · "
         f"이미지 {m['images']} · 표 {m['tables']} · 내부링크 {m['internal_links']} · "
-        f"라벨 {m['labels']} · 공용문장 {m['shared_sentence_ratio']:.0%}"
+        f"라벨 {m['labels']} · 공용문장 {m['shared_sentence_ratio']:.0%} · "
+        f"확인필요수치 {m.get('risky_claims', 0)}"
     )
 
 

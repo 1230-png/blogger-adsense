@@ -41,6 +41,31 @@ MAX_SHARED_SENTENCE_RATIO = 0.30
 # 글 두 편의 5글자 shingle Jaccard 유사도. 이 이상이면 사실상 같은 글이다.
 NEAR_DUPLICATE_JACCARD = 0.60
 
+# --- 지어낸 수치 검사 ---------------------------------------------------------
+#
+# 왜 필요한가: 발행된 글을 직접 읽어 보니 분량·구조는 전부 통과인데 **내용이
+# 틀려** 있었다. "신혼부부 30세 이하(남성 35세 이하)", "연소득 4,500만원 이하",
+# "인사청" 처럼 실제 제도와 다른 수치와 기관명이 단정적으로 적혀 있었다.
+#
+# 원인은 분명하다. 생성기는 LLM 에 아무 자료도 주지 않으면서 "구체적인 수치를
+# 담으라"고 시켰다. 자료가 없으면 그럴듯한 숫자를 지어내는 것 말고 방법이 없다.
+#
+# 글자 수 검사로는 이걸 절대 잡을 수 없다 — 지어낸 수치일수록 글은 더 구체적이고
+# 길어 보인다. 그래서 별도 검사가 필요하다.
+#
+# 한계(중요): 이 검사는 **수치가 틀렸는지 판단하지 못한다.** 확인이 필요한
+# 문장을 골라낼 뿐이다. 최종 판단은 사람이 원 출처를 보고 해야 한다.
+RISKY_CLAIM_PATTERNS = [
+    (r"\d[\d,]*\s*(?:만\s*원|억\s*원|만원|억원)", "금액 기준"),
+    (r"만\s*\d+\s*세|\d+\s*세\s*(?:이하|이상|미만|초과)", "연령 요건"),
+    (r"\d+(?:\.\d+)?\s*%", "비율·요율"),
+    (r"\d+\s*(?:년|개월|주)\s*(?:이내|이상|이하|미만)", "기간 요건"),
+    (r"제\s*\d+\s*조", "법령 조항"),
+]
+
+# 이 개수를 넘으면 차단한다. 1~2개는 상식 수준의 수치일 수 있으므로 봐준다.
+MAX_RISKY_CLAIMS = 2
+
 # --- 사이트 전체에 적용하는 임계값 --------------------------------------------
 
 MIN_PUBLISHED_POSTS = 20   # 공식 숫자가 아니라 실무 하한선
@@ -223,6 +248,26 @@ def jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b)
 
 
+def find_risky_claims(html: str) -> list:
+    """확인이 필요한 수치 주장을 (문구, 종류) 목록으로 돌려준다.
+
+    표 안의 요약 문구까지 포함해 본문 전체를 본다. 중복은 한 번만 센다 —
+    같은 금액이 요약 표와 본문에 두 번 나온 것을 두 건으로 세면 실제보다
+    위험해 보인다.
+    """
+    text = visible_text(html)
+    found, seen = [], set()
+    for pattern, kind in RISKY_CLAIM_PATTERNS:
+        for match in re.finditer(pattern, text):
+            phrase = match.group(0).strip()
+            key = (phrase, kind)
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append((phrase, kind))
+    return found
+
+
 # --- 글 단위 검사 -------------------------------------------------------------
 
 
@@ -322,6 +367,21 @@ def check_post(
         )
     if len(labels) < MIN_LABELS:
         add(Finding("no_label", WARN, "라벨(카테고리)이 없습니다."))
+    risky = find_risky_claims(html)
+    report.metrics["risky_claims"] = len(risky)
+    if len(risky) > MAX_RISKY_CLAIMS:
+        sample = ", ".join(f"{p}({k})" for p, k in risky[:5])
+        add(
+            Finding(
+                "unverified_figures",
+                BLOCK,
+                f"확인되지 않은 수치 {len(risky)}건 (허용 {MAX_RISKY_CLAIMS}건): {sample}"
+                + (" 외" if len(risky) > 5 else "")
+                + ". 자료 없이 생성된 수치는 사실과 다를 수 있습니다. "
+                "원 출처로 확인하거나, 수치를 빼고 '어디서 확인하는지'로 바꾸세요.",
+            )
+        )
+
     if shared_ratio > MAX_SHARED_SENTENCE_RATIO:
         add(
             Finding(

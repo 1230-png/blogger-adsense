@@ -206,3 +206,67 @@ def test_글이_적으면_차단한다():
 def test_제목이_비면_차단한다(title):
     report = quality.check_post(make_post(title=title), blog_host=HOST)
     assert "no_title" in codes(report)
+
+
+# --- 지어낸 수치 검사 ---------------------------------------------------------
+#
+# 발행된 글을 직접 읽어 보니 분량·구조는 전부 통과인데 수치가 틀려 있었다.
+# 글자 수 검사로는 절대 잡히지 않는 결함이라 별도 검사를 붙였다.
+
+
+def test_금액_연령_비율을_찾아낸다():
+    html = (
+        "<p>연소득 4,500만원 이하이고 만 39세 이하이면 신청할 수 있으며, "
+        "중위소득 80% 기준을 적용합니다.</p>"
+    )
+    kinds = {kind for _, kind in quality.find_risky_claims(html)}
+    assert kinds == {"금액 기준", "연령 요건", "비율·요율"}
+
+
+def test_기간_요건과_법령_조항도_찾는다():
+    html = "<p>결혼 후 7년 이내여야 하며, 주택법 제20조에 따릅니다.</p>"
+    kinds = {kind for _, kind in quality.find_risky_claims(html)}
+    assert kinds == {"기간 요건", "법령 조항"}
+
+
+def test_같은_수치가_두_번_나와도_한_건으로_센다():
+    """요약 표와 본문에 같은 금액이 나오는 건 흔하다. 두 건으로 세면 과장된다."""
+    html = "<p>연소득 4,500만원 이하입니다.</p><p>다시 말해 4,500만원 이하입니다.</p>"
+    assert len(quality.find_risky_claims(html)) == 1
+
+
+def test_순서를_세는_숫자는_수치로_보지_않는다():
+    """'7가지', '5단계' 같은 건 사실 주장이 아니다."""
+    html = "<p>7가지 방법을 5단계로 정리했고 3개 항목을 확인합니다.</p>"
+    assert quality.find_risky_claims(html) == []
+
+
+def test_수치가_많으면_차단한다():
+    body = "".join(f"<h2>소제목 {i}</h2><p>{'글' * 400} {i}번 문장입니다.</p>" for i in range(5))
+    claims = (
+        "<p>연소득 4,500만원 이하, 자산 1억원 이하, 만 39세 이하, "
+        "중위소득 80%, 결혼 후 7년 이내가 기준입니다.</p>"
+    )
+    post = {
+        "id": "x", "title": "제목", "url": "",
+        "content": body + claims + f'<p><a href="https://{HOST}/a.html">다른 글</a></p>',
+        "labels": ["재테크"],
+    }
+    report = quality.check_post(post, blog_host=HOST)
+    assert "unverified_figures" in codes(report)
+    assert report.blocked
+
+
+def test_수치가_한두_개면_통과시킨다():
+    """'하루 8잔' 수준의 상식적인 수치까지 막으면 게이트가 쓸모없어진다."""
+    post = make_post()
+    post["content"] += "<p>성인 기준 하루 7시간 수면이 권장되며 약 30% 정도가 해당합니다.</p>"
+    report = quality.check_post(post, blog_host=HOST)
+    assert "unverified_figures" not in codes(report)
+
+
+def test_지표에_확인필요수치_건수가_들어간다():
+    post = make_post()
+    post["content"] += "<p>연소득 4,500만원 기준입니다.</p>"
+    report = quality.check_post(post, blog_host=HOST)
+    assert report.metrics["risky_claims"] == 1
