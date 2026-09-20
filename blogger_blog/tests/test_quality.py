@@ -270,3 +270,21 @@ def test_지표에_확인필요수치_건수가_들어간다():
     post["content"] += "<p>연소득 4,500만원 기준입니다.</p>"
     report = quality.check_post(post, blog_host=HOST)
     assert report.metrics["risky_claims"] == 1
+
+
+def test_관련_글_링크_제목의_수치는_세지_않는다():
+    """'청약통장 200% 활용법'을 링크한 글 여덟 편이 전부 오탐으로 잡혔었다."""
+    body = "<p>본문에는 수치가 없습니다.</p>"
+    related = (
+        f"<h2>{quality.RELATED_BLOCK_HEADING}</h2>"
+        "<ul><li><a href='/a.html'>청약통장 200% 활용법</a></li>"
+        "<li><a href='/b.html'>연소득 4,500만원 가이드</a></li></ul>"
+    )
+    assert quality.find_risky_claims(body + related) == []
+
+
+def test_관련_글_블록_앞의_수치는_그대로_센다():
+    body = "<p>연소득 4,500만원 이하가 기준입니다.</p>"
+    related = f"<h2>{quality.RELATED_BLOCK_HEADING}</h2><ul><li>청약통장 200% 활용법</li></ul>"
+    claims = quality.find_risky_claims(body + related)
+    assert [p for p, _ in claims] == ["4,500만원"]

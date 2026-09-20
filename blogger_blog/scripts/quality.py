@@ -248,14 +248,23 @@ def jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b)
 
 
+# 글 끝의 관련 글 목록. 이 블록은 자동 생성된 **링크 제목**이지 본문 주장이
+# 아니므로 수치 검사에서 제외한다. 실제로 이걸 넣지 않았더니, "청약통장 200%
+# 활용법" 을 링크한 글 여덟 편이 전부 '비율·요율 200%' 로 잡혔다.
+RELATED_BLOCK_HEADING = "함께 읽으면 좋은 글"
+
+
 def find_risky_claims(html: str) -> list:
     """확인이 필요한 수치 주장을 (문구, 종류) 목록으로 돌려준다.
 
-    표 안의 요약 문구까지 포함해 본문 전체를 본다. 중복은 한 번만 센다 —
-    같은 금액이 요약 표와 본문에 두 번 나온 것을 두 건으로 세면 실제보다
-    위험해 보인다.
+    표 안의 요약 문구까지 포함해 본문을 보되, 끝의 관련 글 목록은 뺀다.
+    중복은 한 번만 센다 — 같은 금액이 요약 표와 본문에 두 번 나온 것을
+    두 건으로 세면 실제보다 위험해 보인다.
     """
     text = visible_text(html)
+    cut = text.find(RELATED_BLOCK_HEADING)
+    if cut != -1:
+        text = text[:cut]
     found, seen = [], set()
     for pattern, kind in RISKY_CLAIM_PATTERNS:
         for match in re.finditer(pattern, text):
