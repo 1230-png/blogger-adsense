@@ -16,6 +16,11 @@ on:
         type: boolean
         required: false
         default: false
+      refresh:
+        description: '기존 링크 블록을 지금 공개된 글로 다시 만들기 (글을 내린 뒤 켜세요)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -51,9 +56,10 @@ jobs:
           BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
           BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
           BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+          APPLY: ${{ inputs.apply }}
+          REFRESH: ${{ inputs.refresh }}
         run: |
-          if [ "${{ inputs.apply }}" = "true" ]; then
-            python blogger_blog/scripts/add_internal_links.py --apply
-          else
-            python blogger_blog/scripts/add_internal_links.py
-          fi
+          ARGS=()
+          [ "$APPLY" = "true" ] && ARGS+=(--apply)
+          [ "$REFRESH" = "true" ] && ARGS+=(--refresh)
+          python blogger_blog/scripts/add_internal_links.py "${ARGS[@]}"

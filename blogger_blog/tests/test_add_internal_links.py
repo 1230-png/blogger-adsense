@@ -141,3 +141,63 @@ def test_원본_라벨_목록을_공유하지_않는다():
     body = ail.update_body(original, "<p>x</p>")
     body["labels"].append("오염")
     assert original["labels"] == ["재테크"]
+
+
+# --- --refresh: 내려간 글로 가는 죽은 링크 정리 -------------------------------
+#
+# 글을 초안으로 내리면 그 글을 링크하던 다른 글의 링크가 404가 된다. 404 는
+# "게시자 콘텐츠가 없는 화면"이라, 애드센스가 두 번째로 지적했던 문제로
+# 그대로 되돌아간다. 내리는 작업과 이 정리는 짝으로 돌아야 한다.
+
+
+def test_블록을_통째로_교체한다():
+    content = "<p>본문</p>" + ail.render_block(POSTS[:3])
+    new = ail.replace_block(content, ail.render_block(POSTS[3:4]))
+    assert new.count(ail.BLOCK_HEADING) == 1
+    assert "무주택 기간 계산" in new
+    assert "청약통장 활용법" not in new
+
+
+def test_블록이_없으면_끝에_붙인다():
+    new = ail.replace_block("<p>본문</p>", ail.render_block(POSTS[:1]))
+    assert new.startswith("<p>본문</p>")
+    assert ail.BLOCK_HEADING in new
+
+
+def test_블록_뒤의_고지문을_잃지_않는다():
+    """generate_post 는 링크 블록 '뒤'에 카테고리 고지를 붙인다."""
+    content = "<p>본문</p>" + ail.render_block(POSTS[:3]) + "\n<p><em>고지 문구</em></p>"
+    new = ail.replace_block(content, ail.render_block(POSTS[3:4]))
+    assert "<p><em>고지 문구</em></p>" in new
+    assert new.count(ail.BLOCK_HEADING) == 1
+
+
+def test_제목의_백슬래시가_교체를_깨뜨리지_않는다():
+    r"""re.sub 의 치환 문자열은 '\1' 같은 것을 참조로 해석한다."""
+    tricky = [dict(POSTS[0], title=r"경로 C:\1 정리법")]
+    content = "<p>본문</p>" + ail.render_block(POSTS[:1])
+    new = ail.replace_block(content, ail.render_block(tricky))
+    assert r"경로 C:\1 정리법" in new
+
+
+def test_내려간_글로_가는_링크를_죽은_링크로_센다():
+    live = {p["url"] for p in POSTS[:2]}
+    content = ail.render_block(POSTS[:3])  # 3번 글은 살아 있지 않다
+    assert ail.dead_links(content, live, HOST) == [POSTS[2]["url"]]
+
+
+def test_살아_있는_링크만_있으면_죽은_링크가_없다():
+    live = {p["url"] for p in POSTS}
+    assert ail.dead_links(ail.render_block(POSTS[:3]), live, HOST) == []
+
+
+def test_외부_링크는_죽은_링크로_세지_않는다():
+    content = '<p><a href="https://www.google.com/">외부</a></p>'
+    assert ail.dead_links(content, set(), HOST) == []
+
+
+def test_고정_페이지_링크는_살아_있는_링크다():
+    """소개·문의 페이지로 가는 링크를 죽은 링크로 잘못 세면 안 된다."""
+    page_url = f"https://{HOST}/p/about.html"
+    content = f'<p><a href="{page_url}">소개</a></p>'
+    assert ail.dead_links(content, {page_url}, HOST) == []

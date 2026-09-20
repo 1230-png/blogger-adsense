@@ -1,0 +1,122 @@
+name: Blogger Unpublish Unverified
+
+# 금액·연령·법령 조항을 지어낸 글을 초안으로 내린다.
+#
+# prune(얇은 글 걷어내기)과 목적이 다르다. 여기 걸리는 글은 분량도 구조도
+# 멀쩡한데 **내용이 틀렸을 수 있는** 글이다. 자료 없이 생성된 수치라 확인할
+# 방법이 없고, 틀린 금액을 보고 실제로 신청을 잘못하면 승인 문제 이전에
+# 독자가 손해를 본다.
+#
+# 삭제가 아니라 초안 전환이라 되돌릴 수 있지만 주소(URL)는 보장되지 않는다.
+# 그래서 자동 스케줄을 두지 않고, apply 를 명시적으로 켜야만 실제로 손댄다.
+#
+# ⚠️ 내린 직후에 Blogger Add Internal Links 를 refresh 로 한 번 돌리세요.
+#    내려간 글을 링크하던 글이 404 로 이어집니다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_hard_claims:
+        description: '금액·연령·법령 조항 수치가 몇 건 이상이면 내릴지'
+        required: true
+        default: '3'
+      title_contains:
+        description: '추가로 내릴 글의 제목 일부 (콤마로 여러 개)'
+        required: false
+        default: ''
+      apply:
+        description: '실제로 초안 전환 (끄면 미리보기만)'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: blogger-unpublish
+  cancel-in-progress: false
+
+jobs:
+  unpublish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r blogger_blog/scripts/requirements.txt
+
+      - name: 선별 로직 자체 테스트
+        run: python -m pytest blogger_blog/tests/test_unpublish_posts.py -q
+
+      - name: 선별 실행
+        env:
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+          MIN_HARD: ${{ inputs.min_hard_claims }}
+          TITLES: ${{ inputs.title_contains }}
+          APPLY: ${{ inputs.apply }}
+        run: |
+          ARGS=(--min-hard-claims "$MIN_HARD" --report unpublish_report.md)
+          if [ "$APPLY" = "true" ]; then
+            ARGS+=(--apply)
+          fi
+          # 콤마로 나눠 --title-contains 를 여러 번 넘긴다. 빈 칸일 때
+          # 루프가 실패 상태로 끝나 스텝 전체가 죽지 않도록 if 로 감싼다.
+          if [ -n "$TITLES" ]; then
+            IFS=',' read -ra PARTS <<< "$TITLES"
+            for part in "${PARTS[@]}"; do
+              trimmed="$(echo "$part" | sed 's/^ *//; s/ *$//')"
+              if [ -n "$trimmed" ]; then
+                ARGS+=(--title-contains "$trimmed")
+              fi
+            done
+          fi
+          python blogger_blog/scripts/unpublish_posts.py "${ARGS[@]}"
+
+      # 어떤 글을 내렸는지가 되돌릴 때 필요한 유일한 기록이다.
+      # 실패했을 때도 반드시 남긴다.
+      - name: 리포트를 실행 요약에 표시
+        if: always()
+        run: |
+          if [ -f unpublish_report.md ]; then
+            cat unpublish_report.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ 리포트가 생성되지 않았습니다. 자격증명(BLOGGER_*)을 확인하세요." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 리포트 아티팩트 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unpublish-report
+          path: unpublish_report.md
+          if-no-files-found: warn
+
+      - name: 발행 기록 커밋
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add blogger_blog/data/used_topics.json
+          if git diff --cached --quiet; then
+            echo "발행 기록 변경 없음"
+          else
+            git commit -m "chore: 확인 불가 수치로 내린 글을 발행 기록에서 제거 [skip ci]"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
+          fi

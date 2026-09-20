@@ -288,3 +288,45 @@ def test_관련_글_블록_앞의_수치는_그대로_센다():
     related = f"<h2>{quality.RELATED_BLOCK_HEADING}</h2><ul><li>청약통장 200% 활용법</li></ul>"
     claims = quality.find_risky_claims(body + related)
     assert [p for p, _ in claims] == ["4,500만원"]
+
+
+# --- 주장 수치와 꾸밈 수치의 구분 ---------------------------------------------
+#
+# 이 구분이 "내릴 글"과 "다시 쓸 글"을 가른다. 여기가 틀리면 살릴 수 있는 글을
+# 내리거나, 내려야 할 글을 다시 써서 또 지어낸 숫자를 올리게 된다.
+
+
+def test_금액과_연령과_법령_조항은_주장_수치다():
+    html = (
+        "<p>연소득 4,500만원 이하이고 만 39세 이하이면 주택법 제5조에 따라 "
+        "신청할 수 있습니다.</p>"
+    )
+    kinds = {k for _, k in quality.hard_claims(html)}
+    assert kinds == {"금액 기준", "연령 요건", "법령 조항"}
+
+
+def test_비율과_기간은_주장_수치가_아니다():
+    html = "<p>소모량이 60% 늘어나며, 3개월 이상 유지하면 몸에 익습니다.</p>"
+    assert quality.hard_claims(html) == []
+    # 다만 확인이 필요한 수치이기는 하므로 전체 검사에서는 잡혀야 한다.
+    assert len(quality.find_risky_claims(html)) == 2
+
+
+def test_주장_수치는_전체_수치의_부분집합이다():
+    html = "<p>보증금 5,000만원, 만 34세 이하, 공제율 15%, 제7조 기준입니다.</p>"
+    assert set(quality.hard_claims(html)) <= set(quality.find_risky_claims(html))
+
+
+def test_주장_수치도_관련_글_목록은_제외한다():
+    html = (
+        "<p>본문입니다.</p>"
+        f"<h2>{quality.RELATED_BLOCK_HEADING}</h2>"
+        '<ul><li><a href="/a.html">1,000만원 모으기</a></li></ul>'
+    )
+    assert quality.hard_claims(html) == []
+
+
+def test_주장_수치_종류는_전체_종류에_정의되어_있다():
+    """HARD_CLAIM_KINDS 에 오타가 나면 조용히 아무것도 안 걸린다."""
+    defined = {kind for _, kind in quality.RISKY_CLAIM_PATTERNS}
+    assert quality.HARD_CLAIM_KINDS <= defined

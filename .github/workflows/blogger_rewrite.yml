@@ -1,0 +1,70 @@
+name: Blogger Rewrite Unverified
+
+# 비율(%)·기간 수치를 지어낸 글의 본문을 다시 쓴다.
+#
+# 내리는 쪽(Blogger Unpublish Unverified)과 짝이다. 금액·연령처럼 수치가
+# 글의 뼈대인 경우는 내리고, 수치를 빼도 문장이 성립하는 경우는 여기서
+# 본문만 교체한다. 이런 글까지 전부 내리면 발행 글 수가 권장 최소치 아래로
+# 떨어져, 이번에는 '콘텐츠가 부족한 사이트'로 반려될 차례가 된다.
+#
+# 제목·주소(URL)·라벨은 그대로 둔다. 새 본문이 품질 게이트를 통과하지
+# 못하면 원본을 건드리지 않으므로, 글이 더 나빠지는 경우는 없다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: '실제로 본문 교체 (끄면 대상 목록만)'
+        type: boolean
+        required: false
+        default: false
+      limit:
+        description: '한 번에 처리할 글 수 상한 (0=제한 없음)'
+        required: false
+        default: '0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blogger-rewrite
+  cancel-in-progress: false
+
+jobs:
+  rewrite:
+    runs-on: ubuntu-latest
+    # LLM 호출이 글마다 1~2회 일어나므로 넉넉히 잡는다.
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r blogger_blog/scripts/requirements.txt
+
+      - name: 선별 로직 자체 테스트
+        run: python -m pytest blogger_blog/tests/test_rewrite_posts.py -q
+
+      - name: 본문 재작성
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODEL: ${{ secrets.GROQ_MODEL }}
+          BLOGGER_REFRESH_TOKEN: ${{ secrets.BLOGGER_REFRESH_TOKEN }}
+          BLOGGER_CLIENT_ID: ${{ secrets.BLOGGER_CLIENT_ID }}
+          BLOGGER_CLIENT_SECRET: ${{ secrets.BLOGGER_CLIENT_SECRET }}
+          BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
+          APPLY: ${{ inputs.apply }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          ARGS=(--limit "$LIMIT")
+          if [ "$APPLY" = "true" ]; then
+            ARGS+=(--apply)
+          fi
+          python blogger_blog/scripts/rewrite_posts.py "${ARGS[@]}"
