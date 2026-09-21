@@ -20,11 +20,6 @@ def llm_response(sections=6, body_chars=300):
     return {
         "title": "신용카드 소득공제를 최대로 받는 사용 비율",
         "meta_description": "총급여의 25%를 넘긴 뒤부터 공제가 시작되는 구조를 정리했습니다.",
-        "summary": [
-            {"label": "공제 시작점", "detail": "총급여의 25%를 초과한 금액부터 공제 대상입니다."},
-            {"label": "공제율", "detail": "결제 수단에 따라 공제율이 다르게 적용됩니다."},
-            {"label": "한도", "detail": "급여 구간별로 공제 한도가 정해져 있습니다."},
-        ],
         "intro": "연말정산 " * 60 + "때마다 헷갈리는 지점을 정리합니다.",
         "sections": [
             {
@@ -66,18 +61,16 @@ def test_결론_소제목이_비면_기본값을_쓴다():
     assert "<h2>정리하며</h2>" in gp.render_html(response, PUBLISHED)
 
 
-def test_요약_표가_들어간다():
+def test_핵심_요약_표를_강제하지_않는다():
+    """24편 전부가 <h2>핵심 요약</h2><table>로 시작한 것 자체가 템플릿 신호였다.
+
+    표를 다시 강제로 붙이면 같은 문제를 재발시키므로, 렌더 결과에 표가
+    전혀 없어야 한다 (quality.py의 no_visual은 경고일 뿐 차단이 아니다).
+    """
     html = gp.render_html(llm_response(), PUBLISHED)
-    assert "<table" in html
-    assert quality.extract(html).tables == 1
-
-
-def test_요약이_없으면_표를_넣지_않는다():
-    response = llm_response()
-    response["summary"] = []
-    html = gp.render_html(response, PUBLISHED)
     assert "<table" not in html
     assert "핵심 요약" not in html
+    assert quality.extract(html).tables == 0
 
 
 def test_내부_링크가_들어간다():
