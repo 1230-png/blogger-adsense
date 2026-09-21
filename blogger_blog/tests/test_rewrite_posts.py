@@ -28,12 +28,24 @@ def post(pid, title, content, labels=("건강",)):
     }
 
 
-def body(text, *, repeat=18):
+# 이 파이프라인이 발행한 글의 꼬리표. 이게 있으면 생성글, 없으면 사람이
+# 편집기에서 갈아 끼운 본문으로 본다 (quality.looks_hand_written).
+RELATED_BLOCK = (
+    f"<h2>{rw.quality.RELATED_BLOCK_HEADING}</h2>"
+    f'<ul><li><a href="https://{HOST}/other.html">다른 글</a></li></ul>'
+)
+HAND_TAIL = f'<p><a href="https://{HOST}/other.html">본문 안에서 건 링크</a></p>'
+
+
+def body(text, *, repeat=18, hand_written=False):
     """게이트의 다른 항목(구조·링크)은 통과하도록 살을 붙인다.
 
     그래야 이 테스트가 보려는 항목 하나만 보고 있다는 게 분명해진다.
     repeat 를 줄이면 구조는 멀쩡한 채로 분량만 모자란 글이 된다 — 실제로
     마지막까지 남았던 '운동 후 근육통' 글이 그 모양이었다.
+
+    hand_written=True 면 관련 글 블록 없이 본문 안에만 링크를 둔다. 사람이
+    Blogger 편집기에서 다시 쓴 글이 실제로 이 모양이다.
     """
     filler = "".join(
         f"<h2>소제목 {i}</h2><p>{text} 여기서는 {i}번째 관점으로 살펴봅니다. "
@@ -41,7 +53,8 @@ def body(text, *, repeat=18):
         + "</p>"
         for i in range(1, 6)
     )
-    return f'<p>서론입니다.</p>{filler}<p><a href="https://{HOST}/other.html">다른 글</a></p>'
+    tail = HAND_TAIL if hand_written else RELATED_BLOCK
+    return f"<p>서론입니다.</p>{filler}{tail}"
 
 
 PERCENT = post("percent", "걷기 속도별 운동 효과",
@@ -119,7 +132,12 @@ def test_분량이_모자란_글도_다시_쓸_대상이다():
 def test_다시_써도_안_풀리는_사유가_섞이면_건너뛴다():
     """예: 다른 글과 문장이 겹치는 글. 다시 써도 같은 이유로 또 막힌다."""
     same = "<p>같은 문장입니다. 이 문장도 똑같습니다. 세 번째 문장도 같습니다.</p>" * 20
-    twins = [post("t1", "쌍둥이 글 하나", same), post("t2", "쌍둥이 글 둘", same)]
+    # 생성글 꼬리표를 붙여 둔다. 그러지 않으면 '사람이 쓴 본문'으로 걸러져서,
+    # 이 테스트가 보려는 templated 판정이 아니라 엉뚱한 이유로 통과한다.
+    twins = [
+        post("t1", "쌍둥이 글 하나", same + RELATED_BLOCK),
+        post("t2", "쌍둥이 글 둘", same + RELATED_BLOCK),
+    ]
     picked = rw.select(twins, blog_host=HOST, min_hard=MIN_HARD)
     codes = set()
     for p in twins:
@@ -152,8 +170,45 @@ def test_사유를_모르면_기본_지시문만_쓴다():
 def test_분량_미달_글도_금액이_뼈대면_내리는_쪽이다():
     short_money = post(
         "sm", "특별공급 요약",
-        "<p>연소득 4,500만원 이하, 자산 3억 원 미만, 만 39세 이하입니다.</p>",
+        "<p>연소득 4,500만원 이하, 자산 3억 원 미만, 만 39세 이하입니다.</p>"
+        + RELATED_BLOCK,
         labels=("재테크",),
     )
     assert rw.select([short_money], blog_host=HOST, min_hard=MIN_HARD) == []
     assert [p["id"] for p, _, _ in up.select([short_money], min_hard=MIN_HARD, title_contains=[])] == ["sm"]
+
+
+# --- 사람이 쓴 본문은 덮지 않는다 ---------------------------------------------
+#
+# 2026-09-21 감사에서 실제로 일어난 일: 자동 발행된 카페인 글을 사람이 Blogger
+# 편집기에서 통째로 다시 썼는데, 1143자라 thin_body 로 잡혔다. 확인필요수치는
+# 1건뿐이라 내리는 쪽으로도 빠지지 않았다. 그대로 돌렸으면 사람이 쓴 원문이
+# LLM 출력으로 덮이고 복구할 방법이 없었다.
+
+HAND = post("hand", "카페인이 수면에 미치는 영향",
+            body("카페인은 간에서 CYP1A2 효소로 분해됩니다.", repeat=3, hand_written=True))
+
+
+def test_사람이_쓴_본문은_다시_쓰지_않는다():
+    report = rw.quality.check_post(HAND, blog_host=HOST)
+    codes = {f.code for f in report.findings if f.severity == rw.quality.BLOCK}
+    assert codes == {"thin_body"}, codes      # 재작성 사유에는 분명히 걸리는데
+    assert rw.select([HAND], blog_host=HOST, min_hard=MIN_HARD) == []   # 대상은 아니다
+
+
+def test_건너뛴_이유를_이름과_함께_알려준다():
+    """조용히 빠지면 감사는 빨간불인데 재작성은 '대상 없음'이라고만 한다."""
+    held = rw.skipped_hand_written([HAND], blog_host=HOST, min_hard=MIN_HARD)
+    assert [p["id"] for p, _ in held] == ["hand"]
+
+
+def test_명시적으로_켜면_덮어쓸_수_있다():
+    picked = rw.select([HAND], blog_host=HOST, min_hard=MIN_HARD, include_hand_written=True)
+    assert [p["id"] for p, _ in picked] == ["hand"]
+
+
+def test_생성글은_건너뛰는_목록에_들어가지_않는다():
+    """같은 분량 미달이라도 꼬리표가 있으면 평소대로 다시 쓴다."""
+    held = rw.skipped_hand_written([SHORT], blog_host=HOST, min_hard=MIN_HARD)
+    assert held == []
+    assert [p["id"] for p, _ in rw.select([SHORT], blog_host=HOST, min_hard=MIN_HARD)] == ["short"]

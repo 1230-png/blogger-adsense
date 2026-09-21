@@ -9,6 +9,10 @@ name: Blogger Rewrite Unverified
 #
 # 제목·주소(URL)·라벨은 그대로 둔다. 새 본문이 품질 게이트를 통과하지
 # 못하면 원본을 건드리지 않으므로, 글이 더 나빠지는 경우는 없다.
+#
+# ⚠️ Blogger 편집기에서 사람이 직접 쓴 본문은 기본적으로 건너뛴다. 재작성은
+#    본문을 교체하는 작업이라 원문이 남지 않기 때문이다. 목록에는 '✋ 건너뜀'
+#    으로 표시되며, 그 글은 사람이 보강해야 한다.
 
 on:
   workflow_dispatch:
@@ -22,6 +26,11 @@ on:
         description: '한 번에 처리할 글 수 상한 (0=제한 없음)'
         required: false
         default: '0'
+      include_hand_written:
+        description: '사람이 쓴 본문도 덮어쓴다 (원문 복구 불가)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -62,9 +71,13 @@ jobs:
           BLOGGER_BLOG_ID: ${{ secrets.BLOGGER_BLOG_ID }}
           APPLY: ${{ inputs.apply }}
           LIMIT: ${{ inputs.limit }}
+          INCLUDE_HAND_WRITTEN: ${{ inputs.include_hand_written }}
         run: |
           ARGS=(--limit "$LIMIT")
           if [ "$APPLY" = "true" ]; then
             ARGS+=(--apply)
+          fi
+          if [ "$INCLUDE_HAND_WRITTEN" = "true" ]; then
+            ARGS+=(--include-hand-written)
           fi
           python blogger_blog/scripts/rewrite_posts.py "${ARGS[@]}"

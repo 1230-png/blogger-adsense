@@ -330,3 +330,26 @@ def test_주장_수치_종류는_전체_종류에_정의되어_있다():
     """HARD_CLAIM_KINDS 에 오타가 나면 조용히 아무것도 안 걸린다."""
     defined = {kind for _, kind in quality.RISKY_CLAIM_PATTERNS}
     assert quality.HARD_CLAIM_KINDS <= defined
+
+
+# --- 사람이 쓴 본문인지 ------------------------------------------------------
+
+
+def test_관련_글_블록이_있으면_생성글로_본다():
+    html = (
+        "<p>본문입니다.</p>"
+        f"<h2>{quality.RELATED_BLOCK_HEADING}</h2>"
+        '<ul><li><a href="/a.html">다른 글</a></li></ul>'
+    )
+    assert quality.looks_hand_written(html) is False
+
+
+def test_블록이_없으면_사람이_쓴_본문으로_본다():
+    html = '<p>본문입니다.</p><p><a href="/a.html">문맥 링크</a></p>'
+    assert quality.looks_hand_written(html) is True
+
+
+def test_빈_본문도_사람이_쓴_쪽으로_기운다():
+    """판별이 애매하면 건드리지 않는 쪽이 안전하다. 재작성은 되돌릴 수 없다."""
+    assert quality.looks_hand_written("") is True
+    assert quality.looks_hand_written(None) is True

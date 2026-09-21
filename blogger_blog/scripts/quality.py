@@ -297,6 +297,26 @@ def hard_claims(html: str) -> list:
     return [(p, k) for p, k in find_risky_claims(html) if k in HARD_CLAIM_KINDS]
 
 
+def looks_hand_written(html: str) -> bool:
+    """본문이 이 파이프라인의 출력이 아닌 것으로 보이면 True.
+
+    이 저장소가 발행·재작성하는 글은 예외 없이 관련 글 블록을 달고 나간다
+    (generate_post.render_html → add_internal_links.render_block). 그 블록이
+    통째로 없다는 것은 Blogger 편집기에서 사람이 본문을 갈아 끼웠다는 뜻이다.
+
+    이 구분이 필요한 이유는 처리 결과가 되돌아오지 않기 때문이다. 내리는
+    것(unpublish)은 초안 전환이라 되살릴 수 있지만, 다시 쓰는 것은 본문을
+    교체해 버려서 사람이 쓴 원문이 어디에도 남지 않는다. 실제로 2026-09-21
+    감사에서, 손으로 다시 쓴 글 한 편이 1143자라는 이유만으로 재작성 대상에
+    들어왔다 — 그대로 돌렸으면 생성글로 덮였다.
+
+    완벽한 판별이 아니다. 사람이 고친 뒤 add_internal_links 를 돌리면 블록이
+    다시 붙어 생성글처럼 보인다. 그래서 이건 '건드리지 않을 이유'로만 쓰고,
+    '건드려도 된다는 근거'로는 쓰지 않는다.
+    """
+    return RELATED_BLOCK_HEADING not in (html or "")
+
+
 # --- 글 단위 검사 -------------------------------------------------------------
 
 

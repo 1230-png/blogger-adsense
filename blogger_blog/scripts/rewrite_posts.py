@@ -94,16 +94,19 @@ def slug_for(post: dict) -> str:
     return FALLBACK_SLUG
 
 
-def select(posts: list, *, blog_host: str, min_hard: int) -> list:
+def select(posts: list, *, blog_host: str, min_hard: int,
+           include_hand_written: bool = False) -> list:
     """다시 쓸 글 목록.
 
-    조건은 두 가지다. (1) 게이트가 아래 사유로 막고 있다, (2) 그 글이 내릴
-    대상이 아니다. 둘째 조건이 없으면 unpublish_posts.py 와 같은 글을 두고
-    다투게 된다.
+    조건은 세 가지다. (1) 게이트가 아래 사유로 막고 있다, (2) 그 글이 내릴
+    대상이 아니다, (3) 사람이 쓴 본문이 아니다. 둘째 조건이 없으면
+    unpublish_posts.py 와 같은 글을 두고 다투게 되고, 셋째 조건이 없으면
+    사람이 쓴 글을 LLM 출력으로 덮는다 (quality.looks_hand_written 주석 참고).
     """
     shared = quality.build_shared_sentences(posts)
     picked = []
     for post in posts:
+        content = post.get("content") or ""
         report = quality.check_post(post, blog_host=blog_host, shared_sentences=shared)
         codes = {f.code for f in report.findings if f.severity == quality.BLOCK}
         if not (codes & REWRITABLE_CODES):
@@ -111,10 +114,28 @@ def select(posts: list, *, blog_host: str, min_hard: int) -> list:
         # 고칠 수 없는 사유가 하나라도 섞여 있으면 다시 써도 소용없다.
         if codes - REWRITABLE_CODES:
             continue
-        if len(quality.hard_claims(post.get("content") or "")) >= min_hard:
+        if len(quality.hard_claims(content)) >= min_hard:
+            continue
+        if not include_hand_written and quality.looks_hand_written(content):
             continue
         picked.append((post, report))
     return sorted(picked, key=lambda t: t[0].get("title", ""))
+
+
+def skipped_hand_written(posts: list, *, blog_host: str, min_hard: int) -> list:
+    """게이트에는 걸렸지만 사람이 쓴 본문이라 건드리지 않는 글.
+
+    조용히 건너뛰면 감사는 계속 빨간불인데 재작성은 "대상 없음"이라고만
+    말한다. 그 사이에서 원인을 찾을 수 없게 되므로 따로 꺼내 보여 준다.
+    """
+    kept = {p.get("id") for p, _ in select(posts, blog_host=blog_host, min_hard=min_hard)}
+    return [
+        (p, r)
+        for p, r in select(
+            posts, blog_host=blog_host, min_hard=min_hard, include_hand_written=True
+        )
+        if p.get("id") not in kept
+    ]
 
 
 def related_for(post: dict, posts: list, limit: int) -> list:
@@ -193,6 +214,11 @@ def main():
         help="이 개수 이상의 주장 수치가 있는 글은 다시 쓰지 않고 넘긴다 "
              "(unpublish_posts.py 가 내릴 대상)",
     )
+    parser.add_argument(
+        "--include-hand-written",
+        action="store_true",
+        help="사람이 고친 것으로 보이는 본문도 덮어쓴다. 원문은 복구되지 않는다",
+    )
     args = parser.parse_args()
 
     if args.apply and not generate_post.GROQ_API_KEY:
@@ -205,7 +231,12 @@ def main():
     host = blogger_api.blog_host(blog)
 
     posts = blogger_api.list_posts(service, blog_id)
-    targets = select(posts, blog_host=host, min_hard=args.min_hard_claims)
+    targets = select(
+        posts,
+        blog_host=host,
+        min_hard=args.min_hard_claims,
+        include_hand_written=args.include_hand_written,
+    )
     if args.limit:
         targets = targets[: args.limit]
 
@@ -216,6 +247,25 @@ def main():
     for post, report in targets:
         n = report.metrics.get("risky_claims", 0)
         print(f"  - {post.get('title','')} (확인필요수치 {n})", file=sys.stderr)
+
+    # 손으로 쓴 글은 여기서 이름을 불러 준다. 감사는 계속 빨간불인데 이쪽이
+    # "대상 없음"이라고만 하면, 왜 안 고쳐지는지 알 길이 없다.
+    if not args.include_hand_written:
+        held = skipped_hand_written(posts, blog_host=host, min_hard=args.min_hard_claims)
+        for post, report in held:
+            reasons = "; ".join(
+                f.message[:60] for f in report.findings if f.severity == quality.BLOCK
+            )
+            print(
+                f"  ✋ 건너뜀(사람이 쓴 본문): {post.get('title','')} — {reasons}",
+                file=sys.stderr,
+            )
+        if held:
+            print(
+                "     이 글들은 사람이 직접 보강해야 합니다. 그래도 덮어쓰려면 "
+                "--include-hand-written 을 붙이세요 (원문은 복구되지 않습니다).",
+                file=sys.stderr,
+            )
 
     if not targets:
         print("✅ 다시 쓸 글이 없습니다.", file=sys.stderr)
