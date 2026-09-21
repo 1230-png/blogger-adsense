@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "first-reader": {
+      "source": "Shubhamsaboo/awesome-llm-apps",
+      "sourceType": "github",
+      "skillPath": "agent_skills/first-reader/SKILL.md",
+      "computedHash": "74f8a5a0f0a8ab0a059f6ba4bcb12395a1f66d91345c2c9e3b9be1aff937c523"
+    },
+    "thinking-out-loud": {
+      "source": "Shubhamsaboo/awesome-llm-apps",
+      "sourceType": "github",
+      "skillPath": "agent_skills/thinking-out-loud/SKILL.md",
+      "computedHash": "9fdb40ef2f7414e79c0cb3e2ab122bdc2328ad125194d9cf57f167fbab54c230"
+    }
+  }
+}
